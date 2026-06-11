@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1400" dy="500" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="420" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- ── INPUT ──────────────────────────────────────── -->
+    <mxCell id="input" value="Raw Frame&#xa;PNG · 1920×1080" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="20" y="170" width="130" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- ── PHASE 1: Foreground Extraction ─────────────── -->
+    <mxCell id="p1" value="Foreground Extraction" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="185" y="80" width="200" height="230" as="geometry" />
+    </mxCell>
+    <mxCell id="p1a" value="RGB → HSV" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p1">
+      <mxGeometry x="15" y="45" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p1b" value="V &gt; 120 threshold" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p1">
+      <mxGeometry x="15" y="95" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p1c" value="MORPH_OPEN  3×3 · 1 iter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p1">
+      <mxGeometry x="15" y="145" width="170" height="35" as="geometry" />
+    </mxCell>
+
+    <!-- ── PHASE 2: Seed Generation ───────────────────── -->
+    <mxCell id="p2" value="Seed Generation" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="420" y="80" width="200" height="230" as="geometry" />
+    </mxCell>
+    <mxCell id="p2a" value="Distance Transform  (L2)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p2">
+      <mxGeometry x="15" y="45" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p2b" value="Gaussian Blur  σ = 1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p2">
+      <mxGeometry x="15" y="95" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p2c" value="Local Maxima  min 12 px&#xa;→ 1 seed per bag" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p2">
+      <mxGeometry x="15" y="145" width="170" height="35" as="geometry" />
+    </mxCell>
+
+    <!-- ── PHASE 3: Watershed ─────────────────────────── -->
+    <mxCell id="p3" value="Watershed Segmentation" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="655" y="80" width="200" height="230" as="geometry" />
+    </mxCell>
+    <mxCell id="p3a" value="Connected components&#xa;→ marker labels" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p3">
+      <mxGeometry x="15" y="45" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p3b" value="cv2.watershed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;fontStyle=1;" vertex="1" parent="p3">
+      <mxGeometry x="15" y="95" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p3c" value="Discard regions  &lt; 150 px²" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="p3">
+      <mxGeometry x="15" y="145" width="170" height="35" as="geometry" />
+    </mxCell>
+
+    <!-- ── PHASE 4: Colour Classification ────────────── -->
+    <mxCell id="p4" value="Colour Classification" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="890" y="80" width="200" height="230" as="geometry" />
+    </mxCell>
+    <mxCell id="p4a" value="Sample median HSV&#xa;per region interior" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;" vertex="1" parent="p4">
+      <mxGeometry x="15" y="45" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p4b" value="Nearest-centroid rule&#xa;3× H-channel weight" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;" vertex="1" parent="p4">
+      <mxGeometry x="15" y="95" width="170" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p4c" value="6 classes assigned&#xa;pink / blue / yellow / grey / green / red" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;" vertex="1" parent="p4">
+      <mxGeometry x="15" y="145" width="170" height="35" as="geometry" />
+    </mxCell>
+
+    <!-- ── GT Centroids input (above phase 4) ─────────── -->
+    <mxCell id="gt" value="Ground Truth HSV Centroids&#xa;(learned from 86 GT frames)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontStyle=2;" vertex="1" parent="1">
+      <mxGeometry x="893" y="14" width="194" height="44" as="geometry" />
+    </mxCell>
+    <mxCell id="e_gt_p4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;dashed=1;dashPattern=5 3;" edge="1" source="gt" target="p4" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ── PHASE 5: OBB + Post-processing ────────────── -->
+    <mxCell id="p5" value="OBB Fitting + Cleanup" style="swimlane;startSize=30;fillColor=#ffe6cc;strokeColor=#d6a300;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="1125" y="80" width="210" height="230" as="geometry" />
+    </mxCell>
+    <mxCell id="p5a" value="approxPolyDP  ε 0.02→0.15&#xa;fallback: minAreaRect" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6a300;fontSize=10;" vertex="1" parent="p5">
+      <mxGeometry x="15" y="45" width="180" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p5b" value="Nested Duplicate Removal&#xa;overlap ≥ 50% → remove smaller" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6a300;fontSize=10;" vertex="1" parent="p5">
+      <mxGeometry x="15" y="95" width="180" height="35" as="geometry" />
+    </mxCell>
+    <mxCell id="p5c" value="Normalise → YOLO OBB .txt&#xa;class  x1 y1 x2 y2 x3 y3 x4 y4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6a300;fontSize=10;" vertex="1" parent="p5">
+      <mxGeometry x="15" y="145" width="180" height="35" as="geometry" />
+    </mxCell>
+
+    <!-- ── OUTPUT ─────────────────────────────────────── -->
+    <mxCell id="output" value="1,071 YOLO OBB&#xa;Label Files" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="1365" y="170" width="120" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- ── Phase arrows ───────────────────────────────── -->
+    <mxCell id="e_in_p1"  style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;" edge="1" source="input" target="p1"  parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_p1_p2"  style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;" edge="1" source="p1"    target="p2"  parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_p2_p3"  style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;" edge="1" source="p2"    target="p3"  parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_p3_p4"  style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;" edge="1" source="p3"    target="p4"  parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_p4_p5"  style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;" edge="1" source="p4"    target="p5"  parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_p5_out" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2;" edge="1" source="p5"    target="output" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+  </root>
+</mxGraphModel>

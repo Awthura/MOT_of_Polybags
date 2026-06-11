@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1400" dy="400" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="300" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- Step 1 -->
+    <mxCell id="s1" value="&lt;b&gt;Raw Frame&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;Dark background&lt;br&gt;bright polybags&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="20" y="95" width="175" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Step 2 -->
+    <mxCell id="s2" value="&lt;b&gt;Isolate Polybags&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;Keep only bright pixels&lt;br&gt;remove noise&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="225" y="95" width="175" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Step 3 -->
+    <mxCell id="s3" value="&lt;b&gt;One Seed per Bag&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;Find the centre of&lt;br&gt;each bag instance&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="430" y="95" width="175" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Step 4 — watershed, highlighted -->
+    <mxCell id="s4" value="&lt;b&gt;Watershed&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;Flood from each seed&lt;br&gt;draw boundary where floods meet&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0050a0;fontColor=#ffffff;strokeColor=#003070;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="635" y="95" width="185" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Step 5 -->
+    <mxCell id="s5" value="&lt;b&gt;Classify Colour&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;Match region HSV&lt;br&gt;to known class centroids&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="850" y="95" width="175" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Step 6 -->
+    <mxCell id="s6" value="&lt;b&gt;Fit Bounding Box&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;Oriented box per region&lt;br&gt;remove inner duplicates&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1055" y="95" width="175" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Output -->
+    <mxCell id="out" value="&lt;b&gt;YOLO OBB Label&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;class + 4 corners&lt;br&gt;per instance&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1260" y="95" width="115" height="90" as="geometry" />
+    </mxCell>
+
+    <!-- Arrows -->
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="s1" target="s2" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s2" target="s3" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s3" target="s4" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s4" target="s5" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s5" target="s6" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s6" target="out" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- Step labels below boxes -->
+    <mxCell id="l1" value="Step 1" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="20" y="195" width="175" height="20" as="geometry" /></mxCell>
+    <mxCell id="l2" value="Step 2" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="225" y="195" width="175" height="20" as="geometry" /></mxCell>
+    <mxCell id="l3" value="Step 3" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="430" y="195" width="175" height="20" as="geometry" /></mxCell>
+    <mxCell id="l4" value="Step 4" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="635" y="195" width="185" height="20" as="geometry" /></mxCell>
+    <mxCell id="l5" value="Step 5" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="850" y="195" width="175" height="20" as="geometry" /></mxCell>
+    <mxCell id="l6" value="Step 6" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="1055" y="195" width="175" height="20" as="geometry" /></mxCell>
+
+  </root>
+</mxGraphModel>

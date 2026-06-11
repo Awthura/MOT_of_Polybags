@@ -1,0 +1,75 @@
+# Images and video
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tiff
+*.avi
+*.mp4
+*.mov
+
+# Binary / large data
+*.npy
+*.pkl
+*.pt
+*.pth
+*.bin
+*.h5
+*.hdf5
+
+# Blender and 3D assets
+*.blend
+*.blend1
+*.stl
+*.obj
+*.fbx
+
+# PDF (generated from .md sources)
+*.pdf
+
+# Dataset directories
+synth_dataset/
+synth_dataset_mcmot/
+synth_dataset_test/
+synth_dataset_val/
+full_dataset/
+pseudo_label/
+superquadrics_*/
+missing_frames_*.txt
+
+# Render outputs and logs
+render_logs*/
+render_logs_mcmot/
+render_logs_test/
+render_logs_val/
+
+# YOLO training output
+runs/
+
+# Calibration / review state (local machine-specific)
+review_state.json
+calibration.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo

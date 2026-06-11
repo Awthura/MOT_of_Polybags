@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="1600" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- ═══════════════════════════════════════════════════
+         INPUT
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="10" value="Blender Synthetic Render&#xa;1,157 PNG frames  |  1920×1080  |  6 polybag classes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=12;fontStyle=1;arcSize=10;" vertex="1" parent="1">
+      <mxGeometry x="330" y="30" width="360" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         SPLIT
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="11" value="86 labelled frames" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="60" y="160" width="180" height="45" as="geometry" />
+    </mxCell>
+    <mxCell id="12" value="1,071 unlabelled frames" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="680" y="160" width="200" height="45" as="geometry" />
+    </mxCell>
+
+    <!-- arrows from blender to splits -->
+    <mxCell id="e10_11" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="10" target="11" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e10_12" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="10" target="12" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         MANUAL PATH (left column)
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="20" value="Manual Annotation&#xa;LabelMe  (polygon tool)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="30" y="280" width="200" height="55" as="geometry" />
+    </mxCell>
+    <mxCell id="21" value="86 GT JSON Labels&#xa;(LabelMe polygon format)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="30" y="410" width="200" height="55" as="geometry" />
+    </mxCell>
+    <mxCell id="22" value="GT HSV Colour Centroids&#xa;(per-class median H, S, V)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="30" y="540" width="200" height="55" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e11_20" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="11" target="20" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e20_21" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="20" target="21" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e21_22" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="21" target="22" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         AUTO-LABEL PATH — watershed pipeline container
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="30" value="Watershed Auto-Label Pipeline  (autolabel_full.py)" style="swimlane;startSize=35;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;arcSize=5;" vertex="1" parent="1">
+      <mxGeometry x="540" y="270" width="420" height="390" as="geometry" />
+    </mxCell>
+
+    <mxCell id="31" value="1. Foreground Mask&#xa;V &gt; 120 threshold  +  MORPH_OPEN (3×3)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="30">
+      <mxGeometry x="20" y="55" width="380" height="45" as="geometry" />
+    </mxCell>
+    <mxCell id="32" value="2. Distance Transform + Local Maxima&#xa;cv2.distanceTransform (L2)  |  min 12 px separation  →  1 seed / bag" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="30">
+      <mxGeometry x="20" y="115" width="380" height="45" as="geometry" />
+    </mxCell>
+    <mxCell id="33" value="3. Watershed Segmentation&#xa;cv2.watershed  →  splits touching same-colour bags" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="30">
+      <mxGeometry x="20" y="175" width="380" height="45" as="geometry" />
+    </mxCell>
+    <mxCell id="34" value="4. HSV Colour Classification&#xa;Nearest-centroid  (3× H weight)  |  discard &lt; 150 px²" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="30">
+      <mxGeometry x="20" y="235" width="380" height="45" as="geometry" />
+    </mxCell>
+    <mxCell id="35" value="5. OBB Fitting&#xa;cv2.approxPolyDP (ε 0.02→0.15)  |  fallback: cv2.minAreaRect" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="30">
+      <mxGeometry x="20" y="295" width="380" height="45" as="geometry" />
+    </mxCell>
+
+    <!-- internal arrows inside pipeline -->
+    <mxCell id="e31_32" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="31" target="32" parent="30"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e32_33" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="32" target="33" parent="30"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e33_34" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="33" target="34" parent="30"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e34_35" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="34" target="35" parent="30"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- unlabelled → pipeline -->
+    <mxCell id="e12_30" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="12" target="30" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- GT centroids → HSV classification (cross-branch) -->
+    <mxCell id="e22_34" value="GT centroids" style="edgeStyle=orthogonalEdgeStyle;dashed=1;dashPattern=6 3;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=open;endFill=0;" edge="1" source="22" target="34" parent="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         POST-PROCESSING
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="40" value="Nested Duplicate Removal&#xa;cv2.intersectConvexConvex  |  remove smaller box if overlap ≥ 50%&#xa;(same-class pairs only)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6a300;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="540" y="700" width="420" height="65" as="geometry" />
+    </mxCell>
+
+    <!-- pipeline → nested removal -->
+    <mxCell id="e30_40" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="30" target="40" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         MERGE
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="50" value="Merge Labels&#xa;Manual labels take precedence  |  full_dataset/labels/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="330" y="830" width="360" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- manual labels → merge -->
+    <mxCell id="e21_50" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="21" target="50" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <!-- nested removal → merge -->
+    <mxCell id="e40_50" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="40" target="50" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         OVERLAY GENERATION
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="60" value="Overlay Generation&#xa;generate_overlays.py  |  cv2.polylines + class labels&#xa;→  full_dataset/overlays/  (1,157 PNGs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="330" y="960" width="360" height="65" as="geometry" />
+    </mxCell>
+    <mxCell id="e50_60" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="50" target="60" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         OVERLAY VIEWER (QC)
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="70" value="Overlay Viewer Tool  (review_tool.py)&#xa;Flask · localhost:8080 · scroll zoom · keyboard nav&#xa;Quick visual QC across all 1,071 auto-labelled frames" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="330" y="1095" width="360" height="70" as="geometry" />
+    </mxCell>
+    <mxCell id="e60_70" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="60" target="70" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         EXPORT TO XANYLABELING FORMAT
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="75" value="Export to LabelMe JSON&#xa;YOLO OBB .txt  →  LabelMe polygon .json  (absolute px coords)&#xa;→  xanylabeling_dataset/  (1,157 images + 1,157 JSONs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="330" y="1235" width="360" height="70" as="geometry" />
+    </mxCell>
+    <mxCell id="e70_75" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="70" target="75" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         X-ANYLABELING
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="80" value="Manual Refinement — X-AnyLabeling&#xa;Open xanylabeling_dataset/  ·  edit polygons as needed&#xa;Add / delete / adjust annotations per frame" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="330" y="1375" width="360" height="70" as="geometry" />
+    </mxCell>
+    <mxCell id="e75_80" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="75" target="80" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         FINAL DATASET
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="90" value="Final Dataset&#xa;1,157 images  +  1,157 LabelMe JSON labels&#xa;6 classes  |  YOLO OBB–compatible" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="330" y="1515" width="360" height="65" as="geometry" />
+    </mxCell>
+    <mxCell id="e80_90" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="80" target="90" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         FUTURE: YOLO TRAINING
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="100" value="[Future]  YOLO11n-OBB Pseudo-Label Training&#xa;Round 0: 86 GT  →  Round N: model predictions replace auto-labels" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#aaaaaa;fontColor=#666666;fontSize=11;dashed=1;dashPattern=6 3;" vertex="1" parent="1">
+      <mxGeometry x="290" y="1650" width="440" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="e90_100" style="edgeStyle=orthogonalEdgeStyle;dashed=1;dashPattern=6 3;strokeColor=#aaaaaa;" edge="1" source="90" target="100" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ═══════════════════════════════════════════════════
+         LEGEND
+    ═══════════════════════════════════════════════════ -->
+    <mxCell id="leg0" value="Legend" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="30" y="1000" width="80" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="leg1" value="" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+      <mxGeometry x="30" y="1040" width="20" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg1t" value="Manual / GT data" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="57" y="1040" width="140" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg2" value="" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+      <mxGeometry x="30" y="1070" width="20" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg2t" value="CV processing step" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="57" y="1070" width="140" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg3" value="" style="rounded=1;fillColor=#ffe6cc;strokeColor=#d6a300;" vertex="1" parent="1">
+      <mxGeometry x="30" y="1100" width="20" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg3t" value="Post-processing" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="57" y="1100" width="140" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg4" value="" style="rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+      <mxGeometry x="30" y="1130" width="20" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg4t" value="Tooling / manual step" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="57" y="1130" width="140" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg5" value="" style="rounded=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+      <mxGeometry x="30" y="1160" width="20" height="20" as="geometry" />
+    </mxCell>
+    <mxCell id="leg5t" value="Format conversion" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="1">
+      <mxGeometry x="57" y="1160" width="140" height="20" as="geometry" />
+    </mxCell>
+
+  </root>
+</mxGraphModel>
