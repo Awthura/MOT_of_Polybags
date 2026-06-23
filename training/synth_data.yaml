@@ -1,0 +1,15 @@
+path: /home/diky85bu/data
+
+train: synth_dataset_mcmot/images
+val:   synth_dataset_val/images
+test:  synth_dataset_test/images
+
+nc: 7
+names:
+  - pink_polybag
+  - blue_polybag
+  - yellow_polybag
+  - grey_polybag
+  - green_polybag
+  - red_polybag
+  - teal_polybag

@@ -41,18 +41,23 @@ import random
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BASE       = Path("/Users/awthura/OVGU/AMS")
-TRAIN_DIR  = BASE / "YOLO11_OBB_training_data"
-LABELS_ALL = BASE / "full_dataset" / "labels_all"   # one .txt per image (manual+auto)
+parser_pre = argparse.ArgumentParser(add_help=False)
+parser_pre.add_argument("--base", type=Path, default=Path(__file__).resolve().parents[1])
+pre_args, _ = parser_pre.parse_known_args()
+
+BASE       = pre_args.base
+DATASET    = BASE / "full_dataset"
+LABELS_ALL = DATASET / "labels_all"   # one .txt per image (manual+auto)
 PL_ROOT    = BASE / "pseudo_label"
 
 CLASSES = ["pink_polybag", "blue_polybag", "yellow_polybag",
            "grey_polybag",  "green_polybag", "red_polybag"]
 
-json_stems  = {p.stem for p in TRAIN_DIR.glob("*.json")}   # GT labelled frames
-all_images  = sorted(TRAIN_DIR.glob("*.png"))
-gt_images   = [p for p in all_images if p.stem in json_stems]
-unl_images  = [p for p in all_images if p.stem not in json_stems]
+# GT images = those that have a manual label
+gt_stems   = {p.stem for p in (DATASET / "labels_manual").glob("*.txt")}
+all_images = sorted((DATASET / "images").glob("*.png"))
+gt_images  = [p for p in all_images if p.stem in gt_stems]
+unl_images = [p for p in all_images if p.stem not in gt_stems]
 
 VAL_RATIO   = 0.15   # fraction of GT held out for validation every round
 
