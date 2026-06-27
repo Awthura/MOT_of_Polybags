@@ -81,6 +81,7 @@ TRACKERS = {
 W, H = 1920, 1080
 CELL_W, CELL_H = W // 2, H // 2
 FPS = 25
+CROP_RATIO = 0.55   # show center 55% of each frame (polybag action zone)
 
 
 # ── Drawing ────────────────────────────────────────────────────────────────────
@@ -205,6 +206,11 @@ def build_grid_video(tracker_name: str, dataset_name: str,
                            f"{cam_short}_frame_{fn:04d}.jpg"
                 if img_path.exists():
                     cell = cv2.imread(str(img_path))
+                    cw = int(W * CROP_RATIO)
+                    ch = int(H * CROP_RATIO)
+                    x0 = (W - cw) // 2
+                    y0 = (H - ch) // 2
+                    cell = cell[y0:y0+ch, x0:x0+cw]
                     cell = cv2.resize(cell, (CELL_W, CELL_H), interpolation=cv2.INTER_AREA)
                 else:
                     cell = np.full((CELL_H, CELL_W, 3), 30, dtype=np.uint8)

@@ -56,6 +56,7 @@ TRACK_COLORS = [
 W, H = 1920, 1080
 CELL_W, CELL_H = W // 2, H // 2
 FPS = 25
+CROP_RATIO = 0.55   # show center 55% of each frame (polybag action zone)
 
 
 # ── YOLO OBB overlay (single image) ──────────────────────────────────────────
@@ -183,6 +184,12 @@ def _load_cell(ds_dir: Path, cam_short: str, frame_num: int,
                     (CELL_W // 2 - 120, CELL_H // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (80, 80, 80), 2)
         return img
+    ih, iw = img.shape[:2]
+    cw = int(iw * CROP_RATIO)
+    ch = int(ih * CROP_RATIO)
+    x0 = (iw - cw) // 2
+    y0 = (ih - ch) // 2
+    img = img[y0:y0+ch, x0:x0+cw]
     img = cv2.resize(img, (CELL_W, CELL_H), interpolation=cv2.INTER_AREA)
     lbl = cam_short.upper()
     cv2.putText(img, lbl, (14, 38), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 4)
