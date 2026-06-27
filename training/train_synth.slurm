@@ -8,6 +8,8 @@
 #SBATCH --output=logs/train_synth_%j.out
 #SBATCH --error=logs/train_synth_%j.err
 
+# Submit from ~/MOT_of_Polybags/training/ so relative log paths resolve correctly
+cd ~/MOT_of_Polybags/training
 mkdir -p logs
 
 source /opt/spack/main/env.sh
@@ -18,6 +20,6 @@ yolo obb train \
     model=yolo11n-obb.pt \
     epochs=100 \
     imgsz=1920 \
-    batch=16 \
+    batch=8 \
     name=synth_round_0 \
     project=~/runs
