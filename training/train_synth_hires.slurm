@@ -18,8 +18,8 @@ yolo obb train \
     data=~/MOT_of_Polybags/training/synth_data.yaml \
     model=yolo11n-obb.pt \
     epochs=100 \
-    imgsz=1280 \
-    batch=8 \
+    imgsz=1920 \
+    batch=4 \
     amp=False \
     name=synth_hires \
     project=~/runs
