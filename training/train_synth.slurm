@@ -12,7 +12,6 @@
 cd ~/MOT_of_Polybags/training
 mkdir -p logs
 
-source /opt/spack/main/env.sh
 source ~/venv/bin/activate
 
 yolo obb train \
