@@ -21,5 +21,6 @@ yolo obb train \
     epochs=100 \
     imgsz=1920 \
     batch=8 \
+    amp=False \
     name=synth_round_0 \
     project=~/runs
