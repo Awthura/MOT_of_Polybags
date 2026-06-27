@@ -2,39 +2,60 @@
 """
 tracking/associate_cameras.py
 
-Inter-camera association step (MTMCT Stage 2).
+Inter-camera association (MTMCT Stage 2) with multiple strategies.
 
-Approach — hierarchical TbD (Tracking-by-Detection):
-  1. Load per-camera intra-camera tracklets from pred.txt files
-     (already produced by run_tracking.py with ByteTrack or BoT-SORT)
-  2. Build a tracklet-level cost matrix across all camera pairs:
-       - Different class_id  → cost = inf  (cannot be same object)
-       - Same class_id       → cost = 1 - Jaccard(frame_sets)
-     Jaccard temporal overlap captures synchronization: all 4 cameras see the
-     same conveyor belt simultaneously, so the same polybag appears in the same
-     frame range across cameras.
-  3. Hungarian assignment within each color-class group assigns globally
-     consistent IDs to local tracklets.
-  4. Write:
-       tracking_results/{tracker}/{dataset}/global_pred.txt   — merged MOT file
-       tracking_results/{tracker}/{dataset}/global_gt.txt     — merged GT file
-  5. Evaluate global_pred vs global_gt with motmetrics → true MCMOT metrics.
+Pipeline (hierarchical TbD — survey §2.1, §3.3.1):
+  Intra-camera tracklets (from run_tracking.py)
+    → Feature extraction (class_id = color, spatial position)
+    → Inter-camera data association (Hungarian / greedy / frame-level)
+    → Global ID assignment
+    → Merged MOT files → MCMOT metrics
 
-Disambiguation when two bags of the same color appear simultaneously:
-  Within a same-class group, remaining unmatched tracklets are ordered by their
-  mean x-center in image space and matched by rank across cameras (left-to-right
-  spatial ordering is consistent on a conveyor viewed from the same side).
+NOTE: pred.txt must contain class_id in column 7.
+      Re-run run_tracking.py if you have old files with class=-1.
 
-Usage:
-  cd repo/tracking
-  python associate_cameras.py --tracker bytetrack --dataset val
-  python associate_cameras.py --tracker botsort   --dataset test
-  python associate_cameras.py --all   # all 4 combinations + compare table
+Methods
+-------
+  class_only        Frame-by-frame: match same-class tracks across cameras.
+                    Simple 1:1 within class; ties broken by x-order.
+                    Closest to a naive approach or the POM-style occupancy map
+                    evaluated per frame.
+
+  tracklet_temporal Tracklet-level: class gate + temporal Jaccard distance
+                    as cost for Hungarian assignment. High overlap → likely
+                    same object (cameras are synchronized, overlapping FOVs).
+                    Models temporal coherence (JPDAF-inspired).
+
+  tracklet_spatial  Tracklet-level: class gate + mean x-position rank across
+                    cameras. Bags on a conveyor have consistent left-to-right
+                    order in all views.
+                    Models spatial consistency (POM-inspired, no calibration).
+
+  tracklet_combined Tracklet-level: class gate + weighted combination of
+                    temporal Jaccard + spatial rank agreement.
+                    Closest to LMGP / DyGLIP without deep features.
+
+  no_assoc          No inter-camera step at all: each camera keeps its local
+                    IDs. Baseline to show what happens without MCMOT.
+
+Usage
+-----
+  # re-generate pred.txt first (must have class_id):
+  python run_tracking.py --tracker bytetrack --dataset val
+
+  # then benchmark all methods:
+  python associate_cameras.py --tracker bytetrack --dataset val --method all
+
+  # single method:
+  python associate_cameras.py --tracker bytetrack --dataset val --method tracklet_combined
+
+  # all tracker × dataset × method combinations:
+  python associate_cameras.py --all
 """
 
 import argparse
 import sys
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +81,8 @@ CAMS = [
     ("left",  "cam_03_left"),
     ("right", "cam_04_right"),
 ]
-CAM_OFFSET = {cam: i * 1000 for i, (cam, _) in enumerate(CAMS)}  # frame offset per cam in merged file
+CAM_IDX = {cam: i for i, (cam, _) in enumerate(CAMS)}
+CAM_FRAME_STRIDE = 10000   # frame offset per camera in the merged global file
 
 DATASETS = {
     "val": {
@@ -77,23 +99,28 @@ DATASETS = {
     },
 }
 
+METHODS = ["no_assoc", "class_only", "tracklet_temporal",
+           "tracklet_spatial", "tracklet_combined"]
 NUM_CLASSES = 7
 INF = 1e9
+
+MOT_METRICS = ["num_frames", "mota", "motp", "idf1",
+               "num_switches", "mostly_tracked", "mostly_lost",
+               "num_false_positives", "num_misses"]
 
 
 # ── Data structures ────────────────────────────────────────────────────────────
 
 class Tracklet:
-    """One continuous track in one camera view."""
-    __slots__ = ("cam", "local_id", "class_id", "frames",
-                 "bboxes", "mean_x", "global_id")
+    __slots__ = ("cam", "local_id", "class_id", "frames", "bboxes",
+                 "mean_x", "global_id")
 
     def __init__(self, cam: str, local_id: int, class_id: int):
         self.cam       = cam
         self.local_id  = local_id
         self.class_id  = class_id
         self.frames: set[int] = set()
-        self.bboxes: dict[int, tuple] = {}  # seq_idx → (x, y, w, h, conf)
+        self.bboxes: dict[int, tuple] = {}   # seq_idx → (x,y,w,h,conf)
         self.mean_x    = 0.0
         self.global_id = -1
 
@@ -103,361 +130,513 @@ class Tracklet:
                                          for b in self.bboxes.values()]))
 
 
-# ── File I/O ───────────────────────────────────────────────────────────────────
+# ── Loaders ────────────────────────────────────────────────────────────────────
 
-def load_tracklets(pred_path: Path, cam: str) -> dict[int, Tracklet]:
-    """Load pred.txt → {local_id: Tracklet}."""
-    tracklets: dict[int, Tracklet] = {}
-    if not pred_path.exists():
-        return tracklets
-    for line in pred_path.read_text().splitlines():
+def _parse_mot_file(path: Path) -> list[tuple]:
+    """Return list of (frame, id, x, y, w, h, conf, class_id) tuples."""
+    rows = []
+    if not path.exists():
+        return rows
+    for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        parts = line.split(",")
-        seq_idx  = int(parts[0])
-        local_id = int(parts[1])
-        x, y, w, h = float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
-        conf     = float(parts[6]) if len(parts) > 6 else 1.0
-        # class_id field: pred.txt has -1 here (standard MOT format doesn't carry class)
-        # We recover class later from the OBB pred format... but our pred.txt omits it.
-        # Fall back to class_id=0 if missing; real class comes from OBB pred files.
-        cls_id   = int(parts[7]) if len(parts) > 7 and parts[7].strip() not in ("-1", "") else -1
-
-        if local_id not in tracklets:
-            tracklets[local_id] = Tracklet(cam, local_id, cls_id)
-        tracklets[local_id].frames.add(seq_idx)
-        tracklets[local_id].bboxes[seq_idx] = (x, y, w, h, conf)
-    for t in tracklets.values():
-        t.finalize()
-    return tracklets
-
-
-def load_tracklets_with_class(pred_path: Path, cam: str) -> dict[int, Tracklet]:
-    """
-    Load pred.txt and recover class_id from the OBB pred file stored alongside.
-    The OBB pred file (pred_obb.txt) carries the class field if available,
-    otherwise we use the majority class per track from the detection conf.
-    Since our run_tracking.py writes standard MOT (class=-1), we use a separate
-    class lookup from per-frame annotated data if needed.
-
-    Fallback: infer class from track color via the per-frame YOLO predictions
-    stored in pred_obb.txt (if it exists next to pred.txt).
-    """
-    tracklets = load_tracklets(pred_path, cam)
-
-    # If class_id is missing (-1), try to recover from pred_obb.txt
-    obb_path = pred_path.parent / "pred_obb.txt"
-    if obb_path.exists():
-        cls_votes: dict[int, list[int]] = defaultdict(list)
-        for line in obb_path.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(",")
-            if len(parts) < 12:
-                continue
-            local_id = int(parts[1])
-            cls_id   = int(parts[11])
-            cls_votes[local_id].append(cls_id)
-        for local_id, votes in cls_votes.items():
-            if local_id in tracklets and tracklets[local_id].class_id == -1:
-                # majority vote
-                from collections import Counter
-                tracklets[local_id].class_id = Counter(votes).most_common(1)[0][0]
-
-    return tracklets
-
-
-def load_gt_tracklets(gt_path: Path, cam_sub: str, ds_dir: Path,
-                      frame_start: int, frame_end: int,
-                      frame_offset: int) -> dict[int, Tracklet]:
-    """Load GT tracklets from gt.txt (standard AABB MOT)."""
-    gt_path = ds_dir / "mot_obb" / cam_sub / "gt" / "gt.txt"
-    tracklets: dict[int, Tracklet] = {}
-    if not gt_path.exists():
-        return tracklets
-    for line in gt_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(",")
-        seq_idx  = int(parts[0])
-        obj_id   = int(parts[1])
-        x, y, w, h = float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
-        conf     = float(parts[6]) if len(parts) > 6 else 1.0
-        cls_id   = int(parts[7]) if len(parts) > 7 else 0
+        p = line.split(",")
+        frame    = int(p[0])
+        obj_id   = int(p[1])
+        x, y, w, h = float(p[2]), float(p[3]), float(p[4]), float(p[5])
+        conf     = float(p[6]) if len(p) > 6 else 1.0
+        cls_id   = int(p[7]) if len(p) > 7 and p[7].strip() not in ("-1", "") else -1
         if conf < 0:
             continue
-        if obj_id not in tracklets:
-            tracklets[obj_id] = Tracklet("gt", obj_id, cls_id)
-        tracklets[obj_id].frames.add(seq_idx)
-        tracklets[obj_id].bboxes[seq_idx] = (x, y, w, h, conf)
-    for t in tracklets.values():
+        rows.append((frame, obj_id, x, y, w, h, conf, cls_id))
+    return rows
+
+
+def load_tracklets(pred_path: Path, cam: str) -> dict[int, Tracklet]:
+    rows = _parse_mot_file(pred_path)
+    tlets: dict[int, Tracklet] = {}
+    for frame, local_id, x, y, w, h, conf, cls_id in rows:
+        if local_id not in tlets:
+            tlets[local_id] = Tracklet(cam, local_id, cls_id)
+        t = tlets[local_id]
+        t.frames.add(frame)
+        t.bboxes[frame] = (x, y, w, h, conf)
+        if cls_id >= 0:
+            t.class_id = cls_id   # update with real class if -1 before
+    # Majority vote on class_id if inconsistent
+    for t in tlets.values():
+        cls_votes = [t.class_id for f, b in t.bboxes.items()
+                     if t.class_id >= 0]
+        if cls_votes:
+            t.class_id = Counter(cls_votes).most_common(1)[0][0]
         t.finalize()
-    return tracklets
+    return tlets
 
 
-# ── Temporal Jaccard overlap ───────────────────────────────────────────────────
+def load_gt(cam_sub: str, ds_dir: Path) -> list[tuple]:
+    gt_path = ds_dir / "mot_obb" / cam_sub / "gt" / "gt.txt"
+    return _parse_mot_file(gt_path)
 
-def temporal_jaccard(a: Tracklet, b: Tracklet) -> float:
+
+# ── Temporal Jaccard ───────────────────────────────────────────────────────────
+
+def jaccard(a: Tracklet, b: Tracklet) -> float:
     inter = len(a.frames & b.frames)
     union = len(a.frames | b.frames)
     return inter / union if union > 0 else 0.0
 
 
-# ── Hungarian assignment within one class group ────────────────────────────────
+# ── Hungarian solver ───────────────────────────────────────────────────────────
 
-def assign_global_ids_for_class(tracklets_by_cam: dict[str, list[Tracklet]],
-                                 next_gid: list[int]) -> int:
+def hungarian_match(cost: np.ndarray, max_cost: float = 0.95) -> list[tuple]:
+    """Return list of (row, col) matched pairs with cost < max_cost."""
+    if cost.size == 0:
+        return []
+    rows, cols = linear_sum_assignment(cost)
+    return [(r, c) for r, c in zip(rows, cols) if cost[r, c] < max_cost]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Association methods
+# ══════════════════════════════════════════════════════════════════════════════
+
+def method_no_assoc(per_cam: dict[str, dict[int, Tracklet]]) -> int:
     """
-    Match tracklets of the same class across cameras and assign global IDs.
-    Uses Hungarian algorithm on temporal Jaccard distance.
-    Returns next available global ID.
+    Baseline: no inter-camera step. Local IDs become global IDs but each
+    camera uses its own independent namespace (shifted by cam_idx * 1000).
     """
-    cam_names = list(tracklets_by_cam.keys())
-    if not cam_names:
-        return next_gid[0]
+    for cam, tlets in per_cam.items():
+        shift = (CAM_IDX[cam] + 1) * 1000
+        for t in tlets.values():
+            t.global_id = t.local_id + shift
+    return max(
+        (t.global_id for tlets in per_cam.values() for t in tlets.values()),
+        default=0
+    ) + 1
 
-    # Collect all unassigned tracklets across cameras
-    all_tracklets = [t for cam in cam_names for t in tracklets_by_cam[cam]]
-    if not all_tracklets:
-        return next_gid[0]
 
-    # Build N×N cost matrix (all pairs)
-    n = len(all_tracklets)
+def method_class_only(per_cam: dict[str, dict[int, Tracklet]]) -> int:
+    """
+    Frame-by-frame: for each frame, match same-class tracks across cameras.
+    Within a color class, sort by x-center and match by rank (1st-to-1st, etc.)
+    Maintain track→global_id mapping across frames for temporal consistency.
+    """
+    local_to_global: dict[tuple[str, int], int] = {}  # (cam, local_id) → global_id
+    next_gid = [1]
+
+    # Gather all frame indices across cameras
+    all_frames: set[int] = set()
+    for tlets in per_cam.values():
+        for t in tlets.values():
+            all_frames |= t.frames
+    all_frames = sorted(all_frames)
+
+    # Build lookup: (cam, frame) → list of (x_center, local_id, class_id)
+    cam_frame_det: dict[tuple, list] = defaultdict(list)
+    for cam, tlets in per_cam.items():
+        for local_id, t in tlets.items():
+            for frame, (x, y, w, h, conf) in t.bboxes.items():
+                cam_frame_det[(cam, frame)].append(
+                    (x + w / 2, local_id, t.class_id))
+
+    for frame in all_frames:
+        for cls_id in range(NUM_CLASSES):
+            # Collect detections for this class across all cameras
+            cam_dets: dict[str, list] = {}
+            for cam, _ in CAMS:
+                dets = [(xc, lid) for (xc, lid, cid)
+                        in cam_frame_det.get((cam, frame), [])
+                        if cid == cls_id]
+                dets.sort()   # sort by x-center
+                if dets:
+                    cam_dets[cam] = dets
+
+            if len(cam_dets) < 2:
+                # Assign new global ID to any new unassigned detections
+                for cam, dets in cam_dets.items():
+                    for _, lid in dets:
+                        key = (cam, lid)
+                        if key not in local_to_global:
+                            local_to_global[key] = next_gid[0]
+                            next_gid[0] += 1
+                continue
+
+            # Match by rank across cameras (sorted by x → same rank = same bag)
+            max_rank = max(len(d) for d in cam_dets.values())
+            for rank in range(max_rank):
+                # Find which cameras have a detection at this rank
+                rank_dets = {cam: dets[rank]
+                             for cam, dets in cam_dets.items()
+                             if rank < len(dets)}
+                # Determine global ID for this rank group
+                gid = None
+                for cam, (_, lid) in rank_dets.items():
+                    key = (cam, lid)
+                    if key in local_to_global:
+                        gid = local_to_global[key]
+                        break
+                if gid is None:
+                    gid = next_gid[0]
+                    next_gid[0] += 1
+                for cam, (_, lid) in rank_dets.items():
+                    local_to_global[(cam, lid)] = gid
+
+    # Assign any remaining tracklets that never appeared in any frame match
+    for cam, tlets in per_cam.items():
+        for lid, t in tlets.items():
+            key = (cam, lid)
+            if key not in local_to_global:
+                local_to_global[key] = next_gid[0]
+                next_gid[0] += 1
+
+    # Write global_id onto tracklets
+    for cam, tlets in per_cam.items():
+        for lid, t in tlets.items():
+            t.global_id = local_to_global.get((cam, lid), -1)
+
+    return next_gid[0]
+
+
+def _assign_within_class(tlets_by_cam: dict[str, list[Tracklet]],
+                          cost_fn, next_gid: list[int], max_cost: float = 0.95):
+    """
+    Generic: build cost matrix across all tracklet pairs from different cameras
+    using cost_fn(ti, tj) → float.  Run Hungarian, form groups, assign global IDs.
+    """
+    cam_names = [cam for cam, ts in tlets_by_cam.items() if ts]
+    all_tlets = [t for ts in tlets_by_cam.values() for t in ts]
+    n = len(all_tlets)
+    if n == 0:
+        return
+
+    # Build n×n cost matrix (only cross-camera pairs matter)
     cost = np.full((n, n), INF)
     for i in range(n):
         for j in range(i + 1, n):
-            ti, tj = all_tracklets[i], all_tracklets[j]
+            ti, tj = all_tlets[i], all_tlets[j]
             if ti.cam == tj.cam:
-                cost[i, j] = INF  # same camera, can't be same object
-                cost[j, i] = INF
-            else:
-                jac = temporal_jaccard(ti, tj)
-                c = 1.0 - jac  # low cost = high overlap = likely same object
-                cost[i, j] = c
-                cost[j, i] = c
+                continue   # same camera → can't be same object
+            c = cost_fn(ti, tj)
+            cost[i, j] = c
+            cost[j, i] = c
 
-    # Greedy cluster formation: iteratively merge highest-overlap pairs
-    # into groups, one tracklet per camera per group.
-    assigned = [False] * n
-    groups: list[list[int]] = []
+    # Greedy merging: repeatedly take lowest-cost compatible pair
+    assigned = [-1] * n      # group index for each tracklet
+    groups: list[set[int]] = []
+    cam_in_group: list[set[str]] = []
 
-    # Sort pairs by cost ascending (best overlaps first)
-    pairs = [(cost[i, j], i, j)
-             for i in range(n) for j in range(i + 1, n)
-             if cost[i, j] < 0.99]  # only consider pairs with >1% overlap
-    pairs.sort()
-
-    cam_of = {i: all_tracklets[i].cam for i in range(n)}
+    pairs = sorted((cost[i, j], i, j)
+                   for i in range(n) for j in range(i + 1, n)
+                   if cost[i, j] < max_cost)
 
     for c, i, j in pairs:
-        if assigned[i] or assigned[j]:
-            continue
-        # Find which group to add both into, if any
-        merged = False
-        for grp in groups:
-            cams_in_grp = {cam_of[k] for k in grp}
-            if cam_of[i] not in cams_in_grp and cam_of[j] not in cams_in_grp:
-                grp += [i, j]
-                assigned[i] = assigned[j] = True
-                merged = True
-                break
-            elif cam_of[i] not in cams_in_grp and not assigned[j]:
-                # j is already in group; add i
-                if not assigned[i]:
-                    grp.append(i)
-                    assigned[i] = True
-                    merged = True
-                    break
-            elif cam_of[j] not in cams_in_grp and not assigned[i]:
-                if not assigned[j]:
-                    grp.append(j)
-                    assigned[j] = True
-                    merged = True
-                    break
-        if not merged:
-            groups.append([i, j])
-            assigned[i] = assigned[j] = True
+        gi, gj = assigned[i], assigned[j]
+        ci, cj = all_tlets[i].cam, all_tlets[j].cam
 
-    # Remaining unassigned tracklets get their own singleton group
+        if gi == -1 and gj == -1:
+            # New group
+            g = len(groups)
+            groups.append({i, j})
+            cam_in_group.append({ci, cj})
+            assigned[i] = assigned[j] = g
+
+        elif gi >= 0 and gj == -1:
+            # Add j to i's group if camera not yet in it
+            if cj not in cam_in_group[gi]:
+                groups[gi].add(j)
+                cam_in_group[gi].add(cj)
+                assigned[j] = gi
+
+        elif gi == -1 and gj >= 0:
+            if ci not in cam_in_group[gj]:
+                groups[gj].add(i)
+                cam_in_group[gj].add(ci)
+                assigned[i] = gj
+
+        # Merging two existing groups: skip to avoid complex bookkeeping
+
+    # Singletons for unassigned
     for i in range(n):
-        if not assigned[i]:
-            groups.append([i])
+        if assigned[i] == -1:
+            g = len(groups)
+            groups.append({i})
+            cam_in_group.append({all_tlets[i].cam})
+            assigned[i] = g
 
     # Assign global IDs to groups
     for grp in groups:
         gid = next_gid[0]
         next_gid[0] += 1
         for idx in grp:
-            all_tracklets[idx].global_id = gid
+            all_tlets[idx].global_id = gid
 
+
+def method_tracklet_temporal(per_cam: dict[str, dict[int, Tracklet]]) -> int:
+    next_gid = [1]
+    for cls_id in range(NUM_CLASSES):
+        by_cam = {cam: [t for t in tlets.values() if t.class_id == cls_id]
+                  for cam, tlets in per_cam.items()}
+        _assign_within_class(by_cam, lambda a, b: 1.0 - jaccard(a, b),
+                              next_gid)
     return next_gid[0]
 
 
-# ── Main association ───────────────────────────────────────────────────────────
-
-def associate(tracker_name: str, dataset_name: str) -> Path | None:
-    ds_cfg      = DATASETS[dataset_name]
-    tracker_out = OUT_ROOT / tracker_name / dataset_name
-
-    print(f"\n  [{tracker_name.upper()} / {dataset_name}] Inter-camera association")
-
-    # Load per-camera tracklets
-    all_tracklets: dict[str, dict[int, Tracklet]] = {}
-    for cam_short, _ in CAMS:
-        pred_path = tracker_out / cam_short / "pred.txt"
-        tlets = load_tracklets_with_class(pred_path, cam_short)
-        all_tracklets[cam_short] = tlets
-        print(f"    {cam_short}: {len(tlets)} tracklets")
-
-    # Check if any class information available
-    has_class = any(
-        t.class_id >= 0
-        for cam_tlets in all_tracklets.values()
-        for t in cam_tlets.values()
-    )
-
-    if not has_class:
-        print("    WARNING: no class_id in pred.txt — re-run tracking with pred_obb.txt")
-        print("    Falling back to temporal-only association (ignores color).")
-
-    # Group tracklets by class, then associate within each class
+def method_tracklet_spatial(per_cam: dict[str, dict[int, Tracklet]]) -> int:
+    """
+    Match tracklets by spatial x-rank within same class.
+    Sort tracklets per camera by mean_x, then cost = |rank_a - rank_b| / max_rank.
+    """
     next_gid = [1]
-    for cls_id in range(NUM_CLASSES if has_class else 1):
-        if has_class:
-            group: dict[str, list[Tracklet]] = {
-                cam: [t for t in tlets.values() if t.class_id == cls_id]
-                for cam, tlets in all_tracklets.items()
-            }
-        else:
-            group = {cam: list(tlets.values())
-                     for cam, tlets in all_tracklets.items()}
+    for cls_id in range(NUM_CLASSES):
+        by_cam: dict[str, list[Tracklet]] = {}
+        for cam, tlets in per_cam.items():
+            subset = sorted([t for t in tlets.values() if t.class_id == cls_id],
+                            key=lambda t: t.mean_x)
+            by_cam[cam] = subset
 
-        assign_global_ids_for_class(group, next_gid)
+        # Rank-based cost
+        rank_of: dict[int, float] = {}   # id(tracklet) → normalised rank
+        for cam, subset in by_cam.items():
+            n = len(subset)
+            for r, t in enumerate(subset):
+                rank_of[id(t)] = r / max(n - 1, 1)
 
-    # Write merged global_pred.txt
-    # Frame index: use seq_idx + cam_offset so each camera occupies its own
-    # frame window. Cameras are synchronized, so seq_idx 1 = same moment for all.
-    global_pred_path = tracker_out / "global_pred.txt"
+        def spatial_cost(a: Tracklet, b: Tracklet) -> float:
+            return abs(rank_of.get(id(a), 0) - rank_of.get(id(b), 0))
+
+        _assign_within_class(by_cam, spatial_cost, next_gid)
+    return next_gid[0]
+
+
+def method_tracklet_combined(per_cam: dict[str, dict[int, Tracklet]]) -> int:
+    """
+    Weighted combination: 0.5 * temporal + 0.5 * spatial.
+    """
+    next_gid = [1]
+    for cls_id in range(NUM_CLASSES):
+        by_cam: dict[str, list[Tracklet]] = {}
+        for cam, tlets in per_cam.items():
+            subset = sorted([t for t in tlets.values() if t.class_id == cls_id],
+                            key=lambda t: t.mean_x)
+            by_cam[cam] = subset
+
+        rank_of: dict[int, float] = {}
+        for cam, subset in by_cam.items():
+            n = len(subset)
+            for r, t in enumerate(subset):
+                rank_of[id(t)] = r / max(n - 1, 1)
+
+        def combined_cost(a: Tracklet, b: Tracklet) -> float:
+            temporal = 1.0 - jaccard(a, b)
+            spatial  = abs(rank_of.get(id(a), 0) - rank_of.get(id(b), 0))
+            return 0.5 * temporal + 0.5 * spatial
+
+        _assign_within_class(by_cam, combined_cost, next_gid)
+    return next_gid[0]
+
+
+# ── Method dispatch ────────────────────────────────────────────────────────────
+
+METHOD_FN = {
+    "no_assoc":          method_no_assoc,
+    "class_only":        method_class_only,
+    "tracklet_temporal": method_tracklet_temporal,
+    "tracklet_spatial":  method_tracklet_spatial,
+    "tracklet_combined": method_tracklet_combined,
+}
+
+
+# ── Output writers ─────────────────────────────────────────────────────────────
+
+def write_global_pred(per_cam: dict[str, dict[int, Tracklet]],
+                      out_path: Path) -> int:
     lines = []
-    for cam_short, tlets in all_tracklets.items():
-        frame_shift = list(CAMS).index(
-            next(c for c in CAMS if c[0] == cam_short)) * 10000
+    for cam, tlets in per_cam.items():
+        shift = CAM_IDX[cam] * CAM_FRAME_STRIDE
         for t in tlets.values():
-            gid = t.global_id
             for seq_idx in sorted(t.frames):
                 x, y, w, h, conf = t.bboxes[seq_idx]
                 lines.append(
-                    f"{seq_idx + frame_shift},{gid},{x:.1f},{y:.1f},"
+                    f"{seq_idx + shift},{t.global_id},{x:.1f},{y:.1f},"
                     f"{w:.1f},{h:.1f},{conf:.4f},{t.class_id},-1,-1"
                 )
-    global_pred_path.write_text("\n".join(sorted(lines,
-                                                  key=lambda l: int(l.split(",")[0]))))
-    print(f"    global_pred.txt: {len(lines)} rows  ({next_gid[0]-1} global IDs)")
-
-    # Write merged global_gt.txt
-    global_gt_path = tracker_out / "global_gt.txt"
-    gt_lines = []
-    for cam_short, cam_sub in CAMS:
-        frame_shift = list(CAMS).index(
-            next(c for c in CAMS if c[0] == cam_short)) * 10000
-        gt_tlets = load_gt_tracklets(
-            None, cam_sub, ds_cfg["ds_dir"],
-            ds_cfg["frame_start"], ds_cfg["frame_end"], ds_cfg["frame_offset"]
-        )
-        for t in gt_tlets.values():
-            for seq_idx in sorted(t.frames):
-                x, y, w, h, conf = t.bboxes[seq_idx]
-                gt_lines.append(
-                    f"{seq_idx + frame_shift},{t.local_id},{x:.1f},{y:.1f},"
-                    f"{w:.1f},{h:.1f},{conf:.4f},{t.class_id},-1,-1"
-                )
-    global_gt_path.write_text("\n".join(sorted(gt_lines,
-                                                key=lambda l: int(l.split(",")[0]))))
-    print(f"    global_gt.txt:   {len(gt_lines)} rows")
-    return tracker_out
+    lines.sort(key=lambda l: int(l.split(",")[0]))
+    out_path.write_text("\n".join(lines))
+    return len(lines)
 
 
-def evaluate_global(tracker_out: Path, tracker_name: str, dataset_name: str) -> dict | None:
-    """Evaluate global_pred vs global_gt with motmetrics."""
-    from evaluate_mot import load_mot_file, iou_distance
+def write_global_gt(ds_cfg: dict, out_path: Path) -> int:
+    lines = []
+    for cam_idx, (cam_short, cam_sub) in enumerate(CAMS):
+        shift = cam_idx * CAM_FRAME_STRIDE
+        rows = load_gt(cam_sub, ds_cfg["ds_dir"])
+        for frame, obj_id, x, y, w, h, conf, cls_id in rows:
+            lines.append(
+                f"{frame + shift},{obj_id},{x:.1f},{y:.1f},"
+                f"{w:.1f},{h:.1f},{conf:.4f},{cls_id},-1,-1"
+            )
+    lines.sort(key=lambda l: int(l.split(",")[0]))
+    out_path.write_text("\n".join(lines))
+    return len(lines)
 
-    pred_path = tracker_out / "global_pred.txt"
-    gt_path   = tracker_out / "global_gt.txt"
-    if not pred_path.exists() or not gt_path.exists():
-        print("    Missing global files — run association first.")
-        return None
 
-    pred_data = load_mot_file(pred_path)
-    gt_data   = load_mot_file(gt_path)
+# ── MOT evaluation ─────────────────────────────────────────────────────────────
 
-    all_frames = sorted(set(pred_data) | set(gt_data))
+def evaluate_mot_files(pred_path: Path, gt_path: Path) -> dict | None:
+    pred_rows = _parse_mot_file(pred_path)
+    gt_rows   = _parse_mot_file(gt_path)
+
+    pred_by_frame: dict[int, list] = defaultdict(list)
+    for r in pred_rows:
+        pred_by_frame[r[0]].append(r)
+    gt_by_frame: dict[int, list] = defaultdict(list)
+    for r in gt_rows:
+        gt_by_frame[r[0]].append(r)
+
+    all_frames = sorted(set(pred_by_frame) | set(gt_by_frame))
     acc = mm.MOTAccumulator(auto_id=True)
-    for frame in all_frames:
-        gt_rows   = gt_data.get(frame, [])
-        pred_rows = pred_data.get(frame, [])
-        gt_ids    = [r[0] for r in gt_rows]
-        pred_ids  = [r[0] for r in pred_rows]
-        dist      = iou_distance(gt_rows, pred_rows)
-        dist      = np.where(dist <= 0.5, dist, np.nan)
-        acc.update(gt_ids, pred_ids, dist)
 
-    METRICS = ["num_frames", "mota", "motp", "idf1",
-               "num_switches", "mostly_tracked", "mostly_lost",
-               "num_false_positives", "num_misses"]
-    mh      = mm.metrics.create()
-    pct     = lambda v: f"{v*100:.1f}%" if isinstance(v, float) else str(v)
+    for frame in all_frames:
+        g_rows = gt_by_frame.get(frame, [])
+        p_rows = pred_by_frame.get(frame, [])
+        g_ids  = [r[1] for r in g_rows]
+        p_ids  = [r[1] for r in p_rows]
+
+        if not g_rows or not p_rows:
+            acc.update(g_ids, p_ids, np.empty((len(g_ids), len(p_ids))))
+            continue
+
+        # IoU distance matrix
+        def to_tlbr(rows):
+            return np.array([[r[2], r[3], r[2]+r[4], r[3]+r[5]]
+                             for r in rows], dtype=float)
+        g_tlbr = to_tlbr(g_rows)
+        p_tlbr = to_tlbr(p_rows)
+        inter_x1 = np.maximum(g_tlbr[:, None, 0], p_tlbr[None, :, 0])
+        inter_y1 = np.maximum(g_tlbr[:, None, 1], p_tlbr[None, :, 1])
+        inter_x2 = np.minimum(g_tlbr[:, None, 2], p_tlbr[None, :, 2])
+        inter_y2 = np.minimum(g_tlbr[:, None, 3], p_tlbr[None, :, 3])
+        inter = (np.clip(inter_x2 - inter_x1, 0, None) *
+                 np.clip(inter_y2 - inter_y1, 0, None))
+        area_g = (g_tlbr[:, 2]-g_tlbr[:, 0]) * (g_tlbr[:, 3]-g_tlbr[:, 1])
+        area_p = (p_tlbr[:, 2]-p_tlbr[:, 0]) * (p_tlbr[:, 3]-p_tlbr[:, 1])
+        union  = area_g[:, None] + area_p[None, :] - inter
+        iou    = np.where(union > 0, inter / union, 0.0)
+        dist   = np.where(1 - iou <= 0.5, 1 - iou, np.nan)
+        acc.update(g_ids, p_ids, dist)
+
+    mh = mm.metrics.create()
     try:
-        s   = mh.compute(acc, metrics=METRICS, name="GLOBAL")
-        row = {k: s.loc["GLOBAL", k] for k in METRICS}
-        print(f"\n    [GLOBAL MCMOT — {tracker_name}/{dataset_name}]")
-        print(f"    MOTA={pct(row['mota'])}  MOTP={pct(row['motp'])}  "
-              f"IDF1={pct(row['idf1'])}  IDSW={int(row['num_switches'])}  "
-              f"MT={row['mostly_tracked']}  ML={row['mostly_lost']}")
-        return row
+        s   = mh.compute(acc, metrics=MOT_METRICS, name="r")
+        return {k: s.loc["r", k] for k in MOT_METRICS}
     except Exception as e:
-        print(f"    Global eval error: {e}")
+        print(f"      metrics error: {e}")
         return None
+
+
+# ── Per-run orchestration ──────────────────────────────────────────────────────
+
+def run_one(tracker_name: str, dataset_name: str, method: str) -> dict | None:
+    ds_cfg      = DATASETS[dataset_name]
+    tracker_out = OUT_ROOT / tracker_name / dataset_name
+
+    # Load tracklets
+    per_cam: dict[str, dict[int, Tracklet]] = {}
+    any_class = False
+    for cam_short, _ in CAMS:
+        pred_path = tracker_out / cam_short / "pred.txt"
+        tlets = load_tracklets(pred_path, cam_short)
+        per_cam[cam_short] = tlets
+        if any(t.class_id >= 0 for t in tlets.values()):
+            any_class = True
+
+    if not any_class and method != "no_assoc":
+        print(f"    WARNING: pred.txt has no class_id — re-run run_tracking.py")
+        print(f"    Falling back to no_assoc.")
+        method = "no_assoc"
+
+    # Run association
+    METHOD_FN[method](per_cam)
+
+    # Write outputs
+    method_dir = tracker_out / method
+    method_dir.mkdir(exist_ok=True)
+    pred_out = method_dir / "global_pred.txt"
+    gt_out   = method_dir / "global_gt.txt"
+
+    n_pred = write_global_pred(per_cam, pred_out)
+
+    # GT only needs to be written once per tracker/dataset (same for all methods)
+    if not gt_out.exists():
+        write_global_gt(ds_cfg, gt_out)
+
+    # Evaluate
+    row = evaluate_mot_files(pred_out, gt_out)
+    return row
+
+
+# ── Pretty table ───────────────────────────────────────────────────────────────
+
+def print_benchmark_table(results: dict[str, dict | None]):
+    pct = lambda v: f"{v*100:.1f}%" if isinstance(v, float) else "N/A"
+    hdr = f"  {'Run (tracker/dataset/method)':<40}  {'MOTA':>7}  {'MOTP':>7}  {'IDF1':>7}  {'IDSW':>6}  {'MT':>5}  {'ML':>5}"
+    print("\n" + "=" * len(hdr))
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    for name, row in results.items():
+        if row is None:
+            print(f"  {name:<40}  (failed)")
+            continue
+        print(f"  {name:<40}  {pct(row['mota']):>7}  {pct(row['motp']):>7}  "
+              f"{pct(row['idf1']):>7}  {int(row['num_switches']):>6}  "
+              f"{row['mostly_tracked']:>5}  {row['mostly_lost']:>5}")
+    print("=" * len(hdr))
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tracker", choices=["bytetrack", "botsort"])
-    ap.add_argument("--dataset", choices=["val", "test"])
-    ap.add_argument("--all", action="store_true")
+    ap.add_argument("--tracker", choices=["bytetrack", "botsort"],
+                    default="bytetrack")
+    ap.add_argument("--dataset", choices=["val", "test"],
+                    default="val")
+    ap.add_argument("--method", choices=METHODS + ["all"],
+                    default="all")
+    ap.add_argument("--all", action="store_true",
+                    help="Run all tracker × dataset × method combinations")
     args = ap.parse_args()
 
-    combos = (
-        [("bytetrack", "val"), ("bytetrack", "test"),
-         ("botsort",   "val"), ("botsort",   "test")]
-        if args.all or (not args.tracker and not args.dataset)
-        else [(args.tracker or "bytetrack", args.dataset or "val")]
-    )
+    if args.all:
+        trackers = ["bytetrack", "botsort"]
+        datasets = ["val", "test"]
+        methods  = METHODS
+    else:
+        trackers = [args.tracker]
+        datasets = [args.dataset]
+        methods  = METHODS if args.method == "all" else [args.method]
 
-    results = {}
-    for tracker_name, dataset_name in combos:
-        out = associate(tracker_name, dataset_name)
-        if out:
-            row = evaluate_global(out, tracker_name, dataset_name)
-            results[f"{tracker_name}/{dataset_name}"] = row
+    results: dict[str, dict | None] = {}
+    for tracker in trackers:
+        for dataset in datasets:
+            print(f"\n{'='*60}")
+            print(f"  {tracker.upper()} / {dataset.upper()}")
+            print(f"{'='*60}")
+            for method in methods:
+                print(f"  [{method}]", end="  ", flush=True)
+                row = run_one(tracker, dataset, method)
+                key = f"{tracker}/{dataset}/{method}"
+                results[key] = row
+                if row:
+                    pct = lambda v: f"{v*100:.1f}%"
+                    print(f"MOTA={pct(row['mota'])}  IDF1={pct(row['idf1'])}  "
+                          f"IDSW={int(row['num_switches'])}")
+                else:
+                    print("(no result)")
 
     if len(results) > 1:
-        print("\n" + "=" * 72)
-        print(f"  {'Run':<22}  {'MOTA':>7}  {'MOTP':>7}  {'IDF1':>7}  {'IDSW':>6}")
-        print("  " + "-" * 60)
-        for name, row in results.items():
-            if row is None:
-                print(f"  {name:<22}  (no results)")
-            else:
-                pct = lambda v: f"{v*100:.1f}%" if isinstance(v, float) else "N/A"
-                print(f"  {name:<22}  {pct(row['mota']):>7}  "
-                      f"{pct(row['motp']):>7}  {pct(row['idf1']):>7}  "
-                      f"{int(row['num_switches']):>6}")
-        print("=" * 72)
+        print_benchmark_table(results)
 
 
 if __name__ == "__main__":
