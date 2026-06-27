@@ -171,7 +171,7 @@ def track_camera(model: YOLO, cam_short: str, ds_cfg: dict,
                 y2 = int(corners[i, :, 1].max())
                 mot_lines.append(
                     f"{seq_idx},{ids[i]},{x1},{y1},{x2-x1},{y2-y1},"
-                    f"{confs[i]:.4f},-1,-1,-1"
+                    f"{confs[i]:.4f},{clss[i]},-1,-1"
                 )
 
         annotate_frame(img, frame_num, cam_short.upper())

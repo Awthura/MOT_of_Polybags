@@ -179,22 +179,23 @@ def evaluate_camera(cam_short: str, cam_sub: str, ds_cfg: dict,
 
 METRICS = [
     "num_frames", "mota", "motp", "idf1",
-    "num_switches", "mt", "ml", "fp", "fn",
+    "num_switches", "mostly_tracked", "mostly_lost",
+    "num_false_positives", "num_misses",
     "precision", "recall",
 ]
 
 METRIC_NAMES = {
-    "num_frames":   "Frames",
-    "mota":         "MOTA",
-    "motp":         "MOTP",
-    "idf1":         "IDF1",
-    "num_switches": "IDSW",
-    "mt":           "MT",
-    "ml":           "ML",
-    "fp":           "FP",
-    "fn":           "FN",
-    "precision":    "Prec",
-    "recall":       "Recall",
+    "num_frames":          "Frames",
+    "mota":                "MOTA",
+    "motp":                "MOTP",
+    "idf1":                "IDF1",
+    "num_switches":        "IDSW",
+    "mostly_tracked":      "MT",
+    "mostly_lost":         "ML",
+    "num_false_positives": "FP",
+    "num_misses":          "FN",
+    "precision":           "Prec",
+    "recall":              "Recall",
 }
 
 
@@ -240,7 +241,7 @@ def evaluate_run(tracker_name: str, dataset_name: str,
             print(f"    {name:5s}  MOTA={pct(row['mota'])}  "
                   f"MOTP={pct(row['motp'])}  IDF1={pct(row['idf1'])}  "
                   f"IDSW={int(row['num_switches'])}  "
-                  f"MT={row['mt']}  ML={row['ml']}")
+                  f"MT={row['mostly_tracked']}  ML={row['mostly_lost']}")
         except Exception as e:
             print(f"    {name}: metrics error — {e}")
 
@@ -256,7 +257,7 @@ def evaluate_run(tracker_name: str, dataset_name: str,
         print(f"    {'ALL':5s}  MOTA={pct(row['mota'])}  "
               f"MOTP={pct(row['motp'])}  IDF1={pct(row['idf1'])}  "
               f"IDSW={int(row['num_switches'])}  "
-              f"MT={row['mt']}  ML={row['ml']}")
+              f"MT={row['mostly_tracked']}  ML={row['mostly_lost']}")
         return row
     except Exception as e:
         print(f"    Aggregate error: {e}")
@@ -278,7 +279,7 @@ def print_comparison_table(results: dict):
         pct = lambda v: f"{v*100:.1f}%" if isinstance(v, float) else "N/A"
         print(f"  {run_name:<22}  {pct(row['mota']):>7}  {pct(row['motp']):>7}  "
               f"{pct(row['idf1']):>7}  {int(row['num_switches']):>6}  "
-              f"{row['mt']:>5}  {row['ml']:>5}")
+              f"{row['mostly_tracked']:>5}  {row['mostly_lost']:>5}")
     print("=" * 72)
 
 
