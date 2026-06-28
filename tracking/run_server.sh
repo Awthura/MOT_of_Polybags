@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=mcmot_benchmark
-#SBATCH --partition=ams
+#SBATCH --partition=gpu-stud
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
+#SBATCH -c 8
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
 #SBATCH --output=logs/benchmark_%j.out
