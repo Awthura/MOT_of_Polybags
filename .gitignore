@@ -27,6 +27,9 @@
 # PDF (generated from .md sources)
 *.pdf
 
+# Tracking outputs — generated files, not source
+tracking_results/
+
 # Dataset directories
 synth_dataset/
 synth_dataset_mcmot/
