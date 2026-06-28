@@ -732,75 +732,114 @@ def _pct(v, key):
     return round(float(v) * 100, 1)
 
 
+def _has_metrics(data: dict, section: str) -> bool:
+    """Return True if at least one entry in the JSON section has real metrics."""
+    if section == "single_camera":
+        for tracker in data.get("single_camera", {}).values():
+            for cam_dict in tracker.values():
+                for cam_data in cam_dict.values():
+                    if cam_data.get("metrics") is not None:
+                        return True
+    elif section == "offline_mcmot":
+        for tracker in data.get("offline_mcmot", {}).values():
+            for method_dict in tracker.values():
+                for res in method_dict.values():
+                    if res.get("metrics") is not None:
+                        return True
+    elif section == "online_mcmot":
+        for tracker_dict in data.get("online_mcmot", {}).values():
+            for ds_dict in tracker_dict.values():
+                for res in ds_dict.values():
+                    if res.get("metrics") is not None:
+                        return True
+    return False
+
+
 def _override_from_json(path: str):
-    """Load server_benchmark JSON and override global data dicts in-place."""
+    """Load server_benchmark JSON and override global data dicts in-place.
+
+    Metric dicts (MOTA/IDF1/IDSW) are only overridden if the JSON actually
+    contains metric values — i.e. motmetrics was installed on the server.
+    If all metrics are None (motmetrics missing), the hardcoded local values
+    are kept intact and only FPS_BENCH_DATA is populated.
+    """
     global SINGLE_CAM_PER_CAM, SINGLE_CAM_ALL, OFFLINE, ONLINE, FPS_BENCH_DATA
 
     with open(path) as f:
         data = json.load(f)
 
+    metrics_available = (
+        _has_metrics(data, "single_camera") or
+        _has_metrics(data, "offline_mcmot") or
+        _has_metrics(data, "online_mcmot")
+    )
+    if not metrics_available:
+        print("  NOTE: JSON has no metric values (motmetrics was not installed on server).")
+        print("        Keeping hardcoded local metric values; loading FPS data only.")
+
     # ── single_camera ─────────────────────────────────────────────────────────
-    new_per_cam: dict = {}
-    new_all:     dict = {}
-    for tracker, ds_dict in data.get("single_camera", {}).items():
-        for dataset, cam_dict in ds_dict.items():
-            cam_rows = []
-            for cam_short, cam_data in cam_dict.items():
-                m = cam_data.get("metrics") or {}
-                row = dict(
-                    mota=_pct(m.get("mota"),            "mota"),
-                    motp=_pct(m.get("motp"),            "motp"),
-                    idf1=_pct(m.get("idf1"),            "idf1"),
-                    idsw=_pct(m.get("num_switches"),    "num_switches"),
-                    mt  =_pct(m.get("mostly_tracked"),  "mostly_tracked"),
-                    ml  =_pct(m.get("mostly_lost"),     "mostly_lost"),
-                )
-                new_per_cam[(tracker, dataset, cam_short)] = row
-                cam_rows.append(row)
-            if cam_rows:
-                avg = {k: round(sum(r[k] for r in cam_rows) / len(cam_rows), 1)
-                       for k in cam_rows[0]}
-                avg["idsw"] = sum(r["idsw"] for r in cam_rows)
-                avg["mt"]   = sum(r["mt"]   for r in cam_rows)
-                avg["ml"]   = sum(r["ml"]   for r in cam_rows)
-                new_all[(tracker, dataset)] = avg
-    if new_per_cam:
-        SINGLE_CAM_PER_CAM = new_per_cam
-    if new_all:
-        SINGLE_CAM_ALL = new_all
+    if metrics_available and _has_metrics(data, "single_camera"):
+        new_per_cam: dict = {}
+        new_all:     dict = {}
+        for tracker, ds_dict in data.get("single_camera", {}).items():
+            for dataset, cam_dict in ds_dict.items():
+                cam_rows = []
+                for cam_short, cam_data in cam_dict.items():
+                    m = cam_data.get("metrics") or {}
+                    row = dict(
+                        mota=_pct(m.get("mota"),            "mota"),
+                        motp=_pct(m.get("motp"),            "motp"),
+                        idf1=_pct(m.get("idf1"),            "idf1"),
+                        idsw=_pct(m.get("num_switches"),    "num_switches"),
+                        mt  =_pct(m.get("mostly_tracked"),  "mostly_tracked"),
+                        ml  =_pct(m.get("mostly_lost"),     "mostly_lost"),
+                    )
+                    new_per_cam[(tracker, dataset, cam_short)] = row
+                    cam_rows.append(row)
+                if cam_rows:
+                    avg = {k: round(sum(r[k] for r in cam_rows) / len(cam_rows), 1)
+                           for k in cam_rows[0]}
+                    avg["idsw"] = sum(r["idsw"] for r in cam_rows)
+                    avg["mt"]   = sum(r["mt"]   for r in cam_rows)
+                    avg["ml"]   = sum(r["ml"]   for r in cam_rows)
+                    new_all[(tracker, dataset)] = avg
+        if new_per_cam:
+            SINGLE_CAM_PER_CAM = new_per_cam
+        if new_all:
+            SINGLE_CAM_ALL = new_all
 
     # ── offline_mcmot ─────────────────────────────────────────────────────────
-    new_offline: dict = {}
-    for tracker, ds_dict in data.get("offline_mcmot", {}).items():
-        for dataset, method_dict in ds_dict.items():
-            for method, res in method_dict.items():
-                m = res.get("metrics") or {}
-                # map server_benchmark method names (trk_*) to report names
-                label = method
-                new_offline[(tracker, dataset, label)] = dict(
-                    mota=_pct(m.get("mota"),         "mota"),
-                    motp=_pct(m.get("motp"),         "motp"),
-                    idf1=_pct(m.get("idf1"),         "idf1"),
-                    idsw=_pct(m.get("num_switches"), "num_switches"),
-                )
-    if new_offline:
-        OFFLINE = new_offline
+    if metrics_available and _has_metrics(data, "offline_mcmot"):
+        new_offline: dict = {}
+        for tracker, ds_dict in data.get("offline_mcmot", {}).items():
+            for dataset, method_dict in ds_dict.items():
+                for method, res in method_dict.items():
+                    m = res.get("metrics") or {}
+                    new_offline[(tracker, dataset, method)] = dict(
+                        mota=_pct(m.get("mota"),         "mota"),
+                        motp=_pct(m.get("motp"),         "motp"),
+                        idf1=_pct(m.get("idf1"),         "idf1"),
+                        idsw=_pct(m.get("num_switches"), "num_switches"),
+                    )
+        if new_offline:
+            OFFLINE = new_offline
 
     # ── online_mcmot ──────────────────────────────────────────────────────────
-    new_online: dict = {}
-    for method, tracker_dict in data.get("online_mcmot", {}).items():
-        for tracker, ds_dict in tracker_dict.items():
-            for dataset, res in ds_dict.items():
-                m = res.get("metrics") or {}
-                new_online[(method, tracker, dataset)] = dict(
-                    mota=_pct(m.get("mota"),         "mota"),
-                    motp=_pct(m.get("motp"),         "motp"),
-                    idf1=_pct(m.get("idf1"),         "idf1"),
-                    idsw=_pct(m.get("num_switches"), "num_switches"),
-                    fps =round(float(res.get("fps", 0)), 2),
-                )
-    if new_online:
-        ONLINE = new_online
+    if metrics_available and _has_metrics(data, "online_mcmot"):
+        new_online: dict = {}
+        for method, tracker_dict in data.get("online_mcmot", {}).items():
+            for tracker, ds_dict in tracker_dict.items():
+                for dataset, res in ds_dict.items():
+                    m = res.get("metrics") or {}
+                    new_online[(method, tracker, dataset)] = dict(
+                        mota=_pct(m.get("mota"),         "mota"),
+                        motp=_pct(m.get("motp"),         "motp"),
+                        idf1=_pct(m.get("idf1"),         "idf1"),
+                        idsw=_pct(m.get("num_switches"), "num_switches"),
+                        fps =round(float(res.get("fps", 0)), 2),
+                    )
+        if new_online:
+            ONLINE = new_online
 
     # ── fps_benchmark ─────────────────────────────────────────────────────────
     FPS_BENCH_DATA = data.get("fps_benchmark")
