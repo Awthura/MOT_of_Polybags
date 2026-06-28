@@ -21,8 +21,8 @@ set -euo pipefail
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 REPO_DIR="$HOME/MOT_of_Polybags"
-DATA_ROOT="$HOME/data"           # override: DATA_ROOT=/other/path bash run_server.sh
-MODEL_PATH="$REPO_DIR/training/weights_synth_hires.pt"
+DATA_ROOT="${DATA_ROOT:-$HOME/data}"
+MODEL_PATH="${MODEL_PATH:-$REPO_DIR/training/weights_synth_hires.pt}"
 
 # ── Python environment ────────────────────────────────────────────────────────
 # Uses venv at ~/venv — activate only if not already in a venv
