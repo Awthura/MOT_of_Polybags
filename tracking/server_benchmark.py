@@ -49,6 +49,12 @@ import numpy as np
 try:
     import torch
     TORCH_OK = True
+    if torch.cuda.is_available():
+        # Workaround: cuDNN sublibrary version mismatch on some cluster configs.
+        # Disabling cuDNN makes PyTorch fall back to native CUDA kernels.
+        # On a large GPU (A40, A100) the throughput loss is acceptable.
+        torch.backends.cudnn.enabled   = False
+        torch.backends.cudnn.benchmark = False
 except ImportError:
     TORCH_OK = False
 

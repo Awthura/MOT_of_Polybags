@@ -73,6 +73,9 @@ if [[ ! -d "$DATA_ROOT" ]]; then
     exit 1
 fi
 
+# ── Ensure required packages are installed ───────────────────────────────────
+pip install -q motmetrics lap 2>/dev/null || true
+
 echo ""
 echo "Datasets found in $DATA_ROOT:"
 ls "$DATA_ROOT" 2>/dev/null | grep -E "synth_dataset" || echo "  (no synth_dataset* dirs found)"
