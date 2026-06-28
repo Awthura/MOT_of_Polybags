@@ -653,10 +653,6 @@ def run_online_method(model_path: Path, dataset_cfg: dict,
         for row in parse_mot(gt_path):
             gt_rows.append((row[0] + shift,) + row[1:])
 
-    pred_rows = [tuple(int(v) if i in (0,1,6) else float(v)
-                       for i, v in enumerate(l.split(",")))
-                 for l in mot_rows]
-    # Simplify: just parse the mot_rows back
     pred_parsed = []
     for l in mot_rows:
         p = l.split(",")
