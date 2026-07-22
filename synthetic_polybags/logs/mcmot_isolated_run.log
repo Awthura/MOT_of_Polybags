@@ -1,0 +1,17 @@
+>>> bytetrack / front 17:00:02
+bytetrack/front: 5535 dets written to /tmp/mcmot_isolated_preds/bytetrack_front.txt
+>>> bytetrack / back 17:02:47
+bytetrack/back: 5445 dets written to /tmp/mcmot_isolated_preds/bytetrack_back.txt
+>>> bytetrack / left 17:05:23
+bytetrack/left: 5481 dets written to /tmp/mcmot_isolated_preds/bytetrack_left.txt
+>>> bytetrack / right 17:08:07
+bytetrack/right: 5490 dets written to /tmp/mcmot_isolated_preds/bytetrack_right.txt
+>>> botsort / front 17:10:37
+botsort/front: 5537 dets written to /tmp/mcmot_isolated_preds/botsort_front.txt
+>>> botsort / back 17:13:13
+botsort/back: 5444 dets written to /tmp/mcmot_isolated_preds/botsort_back.txt
+>>> botsort / left 17:16:02
+botsort/left: 5481 dets written to /tmp/mcmot_isolated_preds/botsort_left.txt
+>>> botsort / right 17:19:00
+botsort/right: 5492 dets written to /tmp/mcmot_isolated_preds/botsort_right.txt
+ALL_DONE 17:21:54

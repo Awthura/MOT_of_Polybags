@@ -1,0 +1,531 @@
+% =============================================================================
+%  MCMOT Methods Report — Intra-camera Trackers & Inter-camera Association
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs,multirow,array,tabularx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{microtype}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+
+% ---------- colours -----------------------------------------------------------
+\definecolor{navyblue}{HTML}{1a2744}
+\definecolor{midblue}{HTML}{2563eb}
+\definecolor{lightgray}{HTML}{f1f5f9}
+\definecolor{darkgray}{HTML}{475569}
+\definecolor{bestgreen}{HTML}{dcfce7}
+\definecolor{alertred}{HTML}{fef2f2}
+
+% ---------- section styling ---------------------------------------------------
+\titleformat{\section}
+  {\large\bfseries\color{navyblue}}
+  {\thesection}{0.8em}{}
+  [\color{navyblue}\titlerule\vspace{2pt}]
+
+\titleformat{\subsection}
+  {\normalsize\bfseries\color{midblue}}{\thesubsection}{0.6em}{}
+
+% Starred subsubsections only — no counter, plain dark gray bold heading.
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{darkgray}}{}{0pt}{}
+
+% ---------- misc macros -------------------------------------------------------
+\newcommand{\code}[1]{\texttt{\small#1}}
+\newcommand{\lit}[1]{\textbf{\small[#1]}}
+\newcommand{\Inf}{\infty}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+% =============================================================================
+\begin{document}
+
+% ---------- Title block -------------------------------------------------------
+\begin{center}
+  {\LARGE\bfseries\color{navyblue}
+    Multi-Camera Multi-Object Tracking\\[4pt]
+    Methods \& Implementation Reference}\\[8pt]
+  {\large Polybag Detection \& Tracking — OVGU AMS}\\[4pt]
+  {\color{darkgray} July 2026}
+\end{center}
+
+\vspace{4pt}
+\noindent\rule{\linewidth}{1.5pt}
+\vspace{4pt}
+
+\noindent
+This document describes every tracking and inter-camera association method
+used in the MCMOT pipeline, from the mathematical formulation to the
+concrete implementation.  Methods are organised into three layers:
+(1)~intra-camera object tracking,
+(2)~offline inter-camera association, and
+(3)~online (real-time) inter-camera association.
+
+% =============================================================================
+\section{Method Taxonomy}
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{L{2.8cm} L{2.8cm} C{1.5cm} C{1.5cm} L{5.2cm}}
+\toprule
+\textbf{Method} & \textbf{Stage} & \textbf{Online?} & \textbf{Memory} & \textbf{Literature basis} \\
+\midrule
+ByteTrack  & Intra-camera  & Yes & $O(N)$ & Zhang et al.\ ECCV 2022 \lit{1} \\
+BoT-SORT   & Intra-camera  & Yes & $O(N)$ & Aharon et al.\ arXiv 2022 \lit{2} \\
+\midrule
+\code{no\_assoc}          & Offline MCMOT & —  & none   & Baseline (identity) \\
+\code{class\_only}        & Offline MCMOT & —  & $O(TN)$ & POM-inspired \lit{3} \\
+\code{trk\_temporal}      & Offline MCMOT & —  & $O(TN)$ & JPDAF-inspired \lit{4} \\
+\code{trk\_spatial}       & Offline MCMOT & —  & $O(TN)$ & POM-inspired \lit{3} \\
+\code{trk\_combined}      & Offline MCMOT & —  & $O(TN)$ & LMGP/DyGLIP-inspired \lit{5} \\
+\midrule
+\code{class\_rank}        & Online MCMOT  & Yes & $O(N)$ & SORT variant \lit{6} \\
+\code{class\_iou}         & Online MCMOT  & Yes & $O(N)$ & Hungarian / LAPJV \lit{7} \\
+\code{class\_smooth}      & Online MCMOT  & Yes & $O(NW)$ & EMA / sliding-window vote \\
+\bottomrule
+\end{tabularx}
+\caption{Complete taxonomy of all methods.  $N$ = number of active tracks,
+  $T$ = sequence length, $W$ = smoothing window (8 frames).}
+\end{table}
+
+% =============================================================================
+\section{Intra-Camera Trackers (Stage 1)}
+
+Both trackers follow the \emph{Tracking-by-Detection} (TbD) paradigm:
+detections from a YOLO OBB model are associated frame-to-frame using a
+Kalman filter for motion prediction and the Hungarian algorithm for
+minimum-cost assignment.
+
+% -----------------------------------------------------------------------------
+\subsection{ByteTrack}
+
+\textbf{Source:} Zhang et al., ``ByteTrack: Multi-Object Tracking by Associating
+Every Detection Box'', ECCV 2022.
+
+\subsubsection*{Key idea}
+Classical trackers discard low-confidence detections before association.
+ByteTrack retains \emph{every} detection box and performs a two-stage match:
+high-confidence detections first, then low-confidence ones.  This recovers
+occluded or briefly-invisible objects that would otherwise be lost.
+
+\subsubsection*{State representation}
+Each track maintains a Kalman filter with state vector
+\begin{equation}
+  \mathbf{x}_k =
+  \bigl[u,\; v,\; s,\; r,\; \dot{u},\; \dot{v},\; \dot{s}\bigr]^\top
+  \label{eq:kalman-state}
+\end{equation}
+where $(u, v)$ is the bounding-box centre, $s$ is the area, $r$ is the
+fixed aspect ratio, and $(\dot{u}, \dot{v}, \dot{s})$ are the corresponding
+velocities.  The constant-velocity state-transition matrix is
+\begin{equation}
+  F = \begin{bmatrix} I_4 & \Delta t \cdot I_4 \\ 0 & I_4 \end{bmatrix},
+  \qquad
+  H = \begin{bmatrix} I_4 & 0 \end{bmatrix}.
+\end{equation}
+Prediction step: $\hat{\mathbf{x}}_k = F\,\mathbf{x}_{k-1}$,\;
+$\hat{P}_k = F P_{k-1} F^\top + Q$.
+Update step: standard Kalman gain applied when a detection is matched.
+
+\subsubsection*{Association}
+Let $\mathcal{D}^H = \{d : \text{conf}(d) \ge \tau_H\}$ (high-confidence)
+and $\mathcal{D}^L = \{d : \tau_L \le \text{conf}(d) < \tau_H\}$
+(low-confidence) with $\tau_H = 0.6$, $\tau_L = 0.1$.
+
+The \textbf{IoU cost} between prediction $\hat{b}_i$ and detection $b_j$ is
+\begin{equation}
+  C^{\text{IoU}}_{ij} = 1 - \text{IoU}\bigl(\hat{b}_i,\, b_j\bigr).
+\end{equation}
+\textbf{Stage 1}: Hungarian assignment on $\mathcal{T}_\text{active} \times
+\mathcal{D}^H$ with threshold $C^{\text{IoU}} < 0.5$.\\
+\textbf{Stage 2}: Unmatched tracks from Stage 1 are matched against
+$\mathcal{D}^L$ using the same cost.\\
+Tracks unmatched for $\delta$ frames are removed; detections unmatched in
+both stages initialise new tracks.
+
+\begin{algorithm}[H]
+\caption{ByteTrack per-frame update}
+\begin{algorithmic}[1]
+\Require detections $\mathcal{D}_t$, active tracks $\mathcal{T}$
+\State $\mathcal{D}^H \gets \{d \in \mathcal{D}_t : \text{conf}(d) \ge \tau_H\}$
+\State $\mathcal{D}^L \gets \{d \in \mathcal{D}_t : \tau_L \le \text{conf}(d) < \tau_H\}$
+\State Predict $\hat{\mathbf{x}}_i$ for each $i \in \mathcal{T}$ via Kalman
+\State $M_1 \gets \textsc{Hungarian}(\mathcal{T}, \mathcal{D}^H, C^{\text{IoU}}, 0.5)$
+\State $\mathcal{T}_u \gets \mathcal{T} \setminus \{\text{matched in } M_1\}$
+\State $M_2 \gets \textsc{Hungarian}(\mathcal{T}_u, \mathcal{D}^L, C^{\text{IoU}}, 0.5)$
+\State Update Kalman states for all matched tracks
+\State Spawn new tracks for unmatched detections in $\mathcal{D}^H$
+\State Remove tracks lost for $> \delta$ frames
+\end{algorithmic}
+\end{algorithm}
+
+% -----------------------------------------------------------------------------
+\subsection{BoT-SORT}
+
+\textbf{Source:} Aharon et al., ``BoT-SORT: Robust Associations Multi-Pedestrian
+Tracking'', arXiv:2206.14651, 2022.
+
+\subsubsection*{Key idea}
+BoT-SORT extends ByteTrack with two additions: (1)~\textbf{Global Motion
+Compensation (GMC)}, which corrects Kalman predictions for camera ego-motion
+using a homography estimate; and (2)~optional \textbf{Re-ID features} that
+provide appearance-based matching alongside IoU.
+
+\subsubsection*{Camera motion compensation}
+Let $H_t \in \mathbb{R}^{3\times 3}$ be the homography between frames $t-1$
+and $t$ (estimated via sparse optical flow / ECC).  Before association the
+predicted bounding-box centre is corrected:
+\begin{equation}
+  \tilde{u}_i = \bigl[H_t \cdot (u_i,\, v_i,\, 1)^\top\bigr]_{1:2}.
+\end{equation}
+This makes the IoU cost robust to global scene motion.
+
+\subsubsection*{Fused cost (with Re-ID)}
+When appearance embeddings $\mathbf{e}_i, \mathbf{e}_j$ are available:
+\begin{equation}
+  C^{\text{fused}}_{ij}
+  = \lambda_1\,C^{\text{IoU}}_{ij}
+  + (1-\lambda_1)\,\bigl(1 - \cos(\mathbf{e}_i,\,\mathbf{e}_j)\bigr),
+  \qquad \lambda_1 \in [0,1].
+\end{equation}
+In our setup Re-ID is disabled ($\lambda_1 = 1$); BoT-SORT therefore differs
+from ByteTrack primarily through the GMC correction.
+
+% =============================================================================
+\section{Offline Inter-Camera Association (Stage 2)}
+
+After intra-camera tracking, each camera $c \in \{1,2,3,4\}$ produces a set
+of \emph{local tracklets}
+$\mathcal{T}_c = \{T_{c,\ell}\}$, where each tracklet carries:
+a local ID $\ell$, a class label $\text{cls}(T)$, a set of active frames
+$F_T \subseteq \{1,\ldots,K\}$, and per-frame axis-aligned bounding boxes.
+The goal is to assign a consistent \emph{global ID} $g(T)$ such that the
+same physical object receives the same ID in all cameras.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{no\_assoc} — Baseline}
+
+No inter-camera step is performed.  Local IDs are promoted to global IDs with
+a per-camera offset to avoid collisions:
+\begin{equation}
+  g(T_{c,\ell}) = \ell + (c-1) \times 1000.
+\end{equation}
+This gives an IDF1 near chance level ($\approx 25\%$) and serves as the
+lower-bound baseline.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{class\_only} — Frame-Level Rank Matching}
+
+\textbf{Closest literature:} POM (Probabilistic Occupancy Map,
+Fleuret et al.\ 2008 \lit{3}) — exploits a shared scene coordinate without
+requiring calibration; here the shared coordinate is the x-axis rank.
+
+\textbf{For each frame $t$ and class $c$}, collect detections
+$\mathcal{D}^c_{t,i} = \{(x^{(k)}_c, \ell^{(k)})\}$ per camera $i$,
+sorted by x-centre.  Assign the same global ID to equal-rank detections:
+\begin{equation}
+  g\!\left(T_{i,\,\ell^{(r)}_i}\right) = g\!\left(T_{j,\,\ell^{(r)}_j}\right)
+  \quad \forall\; i \ne j, \quad r = 0,1,\ldots
+\end{equation}
+Global IDs persist across frames via a \code{local\_to\_global} dictionary;
+a new ID is minted only when a (camera, local\_id) pair has not been seen before.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{trk\_temporal} — Tracklet Temporal Jaccard}
+
+\textbf{Closest literature:} JPDAF (Joint Probabilistic Data Association
+Filter, Bar-Shalom \& Fortmann 1988 \lit{4}), which models the probability
+that two detections belong to the same target via their temporal overlap.
+
+\subsubsection*{Temporal Jaccard distance}
+\begin{equation}
+  d_J(T_a, T_b) = 1 - J(T_a, T_b), \qquad
+  J(T_a, T_b) = \frac{|F_a \cap F_b|}{|F_a \cup F_b|}.
+  \label{eq:jaccard}
+\end{equation}
+Because all cameras are synchronised and observe a shared scene, two tracklets
+from different cameras that co-exist in many frames are likely the same object.
+
+\subsubsection*{Assignment}
+For each color class $c$, build a cost matrix
+\begin{equation}
+  C_{ab} =
+  \begin{cases}
+    d_J(T_a, T_b) & \text{if } \text{cls}(T_a) = \text{cls}(T_b)
+                    \text{ and } \text{cam}(T_a) \ne \text{cam}(T_b)\\
+    \infty & \text{otherwise}
+  \end{cases}
+\end{equation}
+and apply greedy minimum-cost merging (pairs sorted ascending by $C_{ab}$),
+enforcing the constraint that each camera contributes at most one tracklet
+per global group.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{trk\_spatial} — Tracklet Spatial Rank}
+
+\textbf{Closest literature:} POM-style occupancy reasoning \lit{3}; also
+related to the spatial ordering prior in StrongSORT/OC-SORT.
+
+\subsubsection*{Per-camera mean x-centre}
+\begin{equation}
+  \bar{x}(T) = \frac{1}{|F_T|}
+  \sum_{t \in F_T} \!\left(x_t + \tfrac{w_t}{2}\right).
+\end{equation}
+Within class $c$ and camera $i$, sort tracklets by $\bar{x}$ and assign a
+\textit{normalised rank}:
+\begin{equation}
+  \hat{x}(T_{i,k}) = \frac{\text{rank}(T_{i,k})}{\max(|\mathcal{T}^c_i|-1,\,1)}.
+\end{equation}
+The spatial cost is then
+\begin{equation}
+  d_S(T_a, T_b) = \bigl|\hat{x}(T_a) - \hat{x}(T_b)\bigr| \in [0,1].
+\end{equation}
+The intuition is that objects on a conveyor belt preserve their left-to-right
+order across all camera views, so equal normalised rank implies same object.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{trk\_combined} — Combined Cost}
+
+\textbf{Closest literature:} LMGP (Local Motion and Global Perception,
+Tang et al.\ 2017 \lit{5}) and DyGLIP, which fuse appearance, motion, and
+spatial cues without deep Re-ID features.
+
+A simple equal-weight fusion of the two complementary cues:
+\begin{equation}
+  \boxed{d_{\text{comb}}(T_a, T_b) = 0.5\,d_J(T_a, T_b) + 0.5\,d_S(T_a, T_b).}
+  \label{eq:combined}
+\end{equation}
+Greedy Hungarian merging is applied as in the individual methods.
+
+% =============================================================================
+\section{Online (Real-Time) Inter-Camera Association (Stage 2)}
+
+The online pipeline processes all four cameras in parallel threads at each
+timestep $t$ (implemented via \code{ThreadPoolExecutor}).  Association runs
+on the \emph{currently active} track set, with no future information.
+
+\vspace{4pt}
+\noindent
+Each camera returns a list of active tracks at time $t$:
+\begin{equation*}
+  \mathcal{A}_t^{(c)} = \left\{(\ell,\; \text{cls},\; x_c,\; \text{corners})\right\}.
+\end{equation*}
+A global ID mapping $\phi: (\text{cam}, \text{local\_id}) \to \text{global\_id}$
+is maintained across frames and updated each timestep.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{class\_rank} — Per-Frame x-Rank}
+
+\textbf{Closest literature:} Simplified SORT (Bewley et al.\ 2016 \lit{6})
+without the Kalman prediction, relying solely on the spatial ordering
+constraint of a conveyor-belt scene.
+
+\textbf{For each frame $t$ and class $c$}:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item For each camera $i$, collect active tracks of class $c$ and sort by
+        x-centre:
+        \begin{equation}
+          \Pi^c_i = \text{argsort}\!\left(\{x^{(k)}_{c,i}\}_{k}\right).
+        \end{equation}
+  \item Assign the same global ID to same-rank tracks across cameras:
+        \begin{equation}
+          \phi\!\left(i,\, \Pi^c_i[r]\right)
+          = \phi\!\left(j,\, \Pi^c_j[r]\right)
+          \quad \forall\; i \ne j,\; r = 0, 1, \ldots
+        \end{equation}
+  \item If a (cam, local\_id) pair has no existing global ID, a new one is
+        minted.
+\end{enumerate}
+
+\textbf{Complexity}: $O(N \log N)$ per class per frame.  Zero additional
+memory beyond $\phi$.  Works perfectly when same-class objects never swap
+their left-to-right order between cameras.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{class\_iou} — Spatial Hungarian (Normalised $\Delta x$)}
+
+\textbf{Closest literature:} Hungarian algorithm \lit{7} applied to a
+one-dimensional normalised position difference.
+\textit{Note}: the name ``class\_iou'' is a misnomer from an earlier design;
+pixel-space IoU between cameras is always $\approx 0$ for uncalibrated views.
+The actual cost is normalised $|\Delta x|$.
+
+\subsubsection*{Per-frame assignment}
+Let $\tilde{x}_{c,\ell} = x_{c,\ell} / W$ be the \emph{normalised} x-centre
+(where $W = 1920$ px).  Split active class-$c$ tracks into two groups:
+\begin{align}
+  \mathcal{K} &= \{(c, \ell) : \phi(c,\ell) \text{ is already known}\}, \\
+  \mathcal{U} &= \{(c, \ell) : \phi(c,\ell) \text{ is unknown}\}.
+\end{align}
+Build cost matrix $C \in \mathbb{R}^{|\mathcal{U}| \times |\mathcal{K}|}$:
+\begin{equation}
+  C_{uk} =
+  \begin{cases}
+    \bigl|\tilde{x}_u - \tilde{x}_k\bigr|
+      & \text{if } \text{cam}(u) \ne \text{cam}(k) \\
+    1 & \text{(blocked: same camera)}
+  \end{cases}
+\end{equation}
+Solve the assignment problem:
+\begin{equation}
+  \sigma^* = \arg\min_{\sigma} \sum_{u \in \mathcal{U}} C_{u,\,\sigma(u)},
+\end{equation}
+accepting matches where $C_{u,\sigma^*(u)} < \tau = 0.30$
+(i.e., within $\approx 576$ pixels at full resolution).  Unmatched unknowns
+receive new global IDs.  When $\mathcal{K} = \emptyset$ (first frame), falls
+back to \texttt{class\_rank}.
+
+\textbf{Key difference from \texttt{class\_rank}}: rank matching is a strict
+ordinal operation; spatial Hungarian \emph{minimises total displacement},
+tolerating small rank inversions when two bags are spatially close.
+
+% -----------------------------------------------------------------------------
+\subsection{\texttt{class\_smooth} — Class Rank with Temporal Smoothing}
+
+\textbf{Motivation:} \texttt{class\_rank} can produce one-frame ID flickers
+when two same-class bags are near each other and briefly swap x-order.
+\texttt{class\_smooth} suppresses this by maintaining a vote history.
+
+\subsubsection*{Majority-vote smoothing}
+Each (camera, local\_id) pair maintains a \emph{vote history} of global ID
+assignments:
+\begin{equation}
+  H_t^{(c,\ell)} = \bigl[g_{t-W+1},\; g_{t-W+2},\; \ldots,\; g_t\bigr],
+  \quad W = 8.
+\end{equation}
+After \texttt{class\_rank} produces a raw assignment $g_t$, the smoothed
+global ID is
+\begin{equation}
+  \boxed{\hat{g}_t^{(c,\ell)} = \text{mode}\!\left(H_t^{(c,\ell)}\right).}
+  \label{eq:smooth}
+\end{equation}
+The window slides forward each frame; old votes are discarded.
+
+\textbf{Effect}: a transient rank swap for $m < W/2$ frames does not change
+the assigned global ID; only a swap that persists for more than half the
+window actually propagates.
+
+% =============================================================================
+\section{Comparison of Online Methods}
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\linewidth}{L{2.8cm} L{3.2cm} C{1.6cm} L{5.4cm}}
+\toprule
+\textbf{Method} & \textbf{Cost function} & \textbf{Latency} & \textbf{Failure mode} \\
+\midrule
+\code{class\_rank}
+  & Ordinal x-rank (exact)
+  & $O(N\log N)$
+  & Same-class bags swap x-order → ID switch \\
+\code{class\_iou}
+  & $|\Delta\tilde{x}|$, Hungarian
+  & $O(N^3)$ (LAPJV $O(N^2)$)
+  & Sparse class → large $\Delta\tilde{x}$ → false match \\
+\code{class\_smooth}
+  & Ordinal x-rank + majority vote
+  & $O(NW)$
+  & Persistent order swap ($> W/2$ frames) \\
+\bottomrule
+\end{tabularx}
+\caption{Online MCMOT associator comparison.  $N$: detections per class per
+  frame; $W=8$: smoothing window.}
+\end{table}
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\linewidth}{L{2.4cm} C{1.3cm} C{1.3cm} C{1.3cm} C{1.2cm} L{4.8cm}}
+\toprule
+\textbf{Method} & \textbf{MOTA} & \textbf{IDF1} & \textbf{IDSW} & \textbf{fps} & \textbf{Note}\\
+\midrule
+\multicolumn{6}{l}{\textit{BoT-SORT / val set}} \\
+\code{class\_rank}    & 96.2\% & 86.5\% & 31 & 0.9 & Fast; rank swaps cause IDSW \\
+\code{class\_iou}     & 96.5\% & 89.5\% &  6 & 0.8 & Fewest IDSW; best IDF1 \\
+\code{class\_smooth}  & 96.4\% & 86.8\% & 18 & 0.4 & Intermediate \\
+\midrule
+\multicolumn{6}{l}{\textit{BoT-SORT / test set}} \\
+\code{class\_rank}    & 95.3\% & 83.5\% & 19 & 0.6 & \\
+\code{class\_iou}     & 95.5\% & 83.9\% & 10 & 0.9 & Best IDF1 \\
+\code{class\_smooth}  & 95.5\% & 83.6\% & 10 & 0.9 & \\
+\bottomrule
+\end{tabularx}
+\caption{Online MCMOT results (MacBook M2, imgsz=1920).
+  fps = scene-frames/s across all 4 cameras.  \code{class\_iou} consistently
+  achieves the lowest ID-switch count and highest IDF1.}
+\end{table}
+
+% =============================================================================
+\section{Offline vs.\ Online: Design Trade-offs}
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\linewidth}{L{3.0cm} L{5.2cm} L{5.2cm}}
+\toprule
+& \textbf{Offline} & \textbf{Online} \\
+\midrule
+\textbf{Information}
+  & Uses full tracklet history (past + future frames)
+  & Only current active tracks \\
+\textbf{Global optimality}
+  & Can minimise cost over entire sequence
+  & Greedy frame-by-frame \\
+\textbf{Latency}
+  & Post-processing only; not real-time
+  & Real-time; suitable for live systems \\
+\textbf{Best method}
+  & \code{trk\_temporal} (IDF1 up to 98\%)
+  & \code{class\_iou} (IDF1 up to 89.5\%) \\
+\textbf{IDSW (best)}
+  & 0 (\code{botsort}/test/\code{trk\_temporal})
+  & 6 (\code{botsort}/val/\code{class\_iou}) \\
+\bottomrule
+\end{tabularx}
+\caption{Summary comparison of offline vs.\ online MCMOT approaches.}
+\end{table}
+
+% =============================================================================
+\section{References}
+
+\begin{enumerate}[label={[\arabic*]},leftmargin=*,itemsep=2pt]
+\item Y.\ Zhang, P.\ Sun, Y.\ Jiang, D.\ Yu, F.\ Weng, Z.\ Yuan, P.\ Luo,
+      W.\ Liu, X.\ Wang.
+      ``ByteTrack: Multi-Object Tracking by Associating Every Detection Box.''
+      \textit{ECCV}, 2022.
+
+\item N.\ Aharon, R.\ Orfaig, B.-Z.\ Bobrovsky.
+      ``BoT-SORT: Robust Associations Multi-Pedestrian Tracking.''
+      \textit{arXiv:2206.14651}, 2022.
+
+\item F.\ Fleuret, J.\ Berclaz, R.\ Lengagne, P.\ Fua.
+      ``Multicamera People Tracking with a Probabilistic Occupancy Map.''
+      \textit{IEEE TPAMI}, 30(2):267--282, 2008.
+
+\item Y.\ Bar-Shalom, T.\ E.\ Fortmann.
+      \textit{Tracking and Data Association.}
+      Academic Press, 1988.
+
+\item S.\ Tang, B.\ Andres, M.\ Andriluka, B.\ Schiele.
+      ``Multi-Person Tracking by Multicut and Deep Matching.''
+      \textit{ECCV Workshops}, 2016.
+
+\item A.\ Bewley, Z.\ Ge, L.\ Ott, F.\ Ramos, B.\ Upcroft.
+      ``Simple Online and Realtime Tracking.''
+      \textit{ICIP}, 2016.
+
+\item H.\ W.\ Kuhn.
+      ``The Hungarian Method for the Assignment Problem.''
+      \textit{Naval Research Logistics Quarterly}, 2(1--2):83--97, 1955.
+\end{enumerate}
+
+\end{document}

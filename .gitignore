@@ -30,28 +30,32 @@
 # Tracking outputs — generated files, not source
 tracking_results/
 
-# Dataset directories
+# Dataset directories (synthetic_polybags/)
 synth_dataset/
 synth_dataset_mcmot/
 synth_dataset_test/
 synth_dataset_val/
-full_dataset/
-pseudo_label/
 superquadrics_*/
 missing_frames_*.txt
 
-# Render outputs and logs
+# Render outputs and logs (synthetic_polybags/)
 render_logs*/
 render_logs_mcmot/
 render_logs_test/
 render_logs_val/
 
-# YOLO training output
-runs/
+# Dataset/output directories (real_polybags/)
+full_dataset/
+real_data_labels/
+pipeline_output/
+pseudo_label/
 
 # Calibration / review state (local machine-specific)
 review_state.json
 calibration.json
+
+# YOLO training output
+runs/
 
 # Python
 __pycache__/

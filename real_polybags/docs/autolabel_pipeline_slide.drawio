@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1400" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="500" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- ── GT branch (top) ─────────────────────────────── -->
+    <mxCell id="gt" value="Ground Truth Labels&#xa;86 frames · LabelMe" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="230" y="60" width="170" height="55" as="geometry" />
+    </mxCell>
+
+    <!-- ── Main flow (bottom row) ─────────────────────── -->
+    <mxCell id="blender" value="Blender Render&#xa;1,157 PNG frames" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="30" y="240" width="160" height="55" as="geometry" />
+    </mxCell>
+
+    <mxCell id="watershed" value="Watershed Auto-Label&#xa;1,071 frames" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="230" y="240" width="170" height="55" as="geometry" />
+    </mxCell>
+
+    <mxCell id="nested" value="Nested Duplicate&#xa;Removal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6a300;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="445" y="240" width="155" height="55" as="geometry" />
+    </mxCell>
+
+    <mxCell id="merge" value="Merge Labels&#xa;GT takes precedence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="645" y="240" width="155" height="55" as="geometry" />
+    </mxCell>
+
+    <mxCell id="qc" value="Overlay Viewer&#xa;Visual QC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="845" y="240" width="145" height="55" as="geometry" />
+    </mxCell>
+
+    <mxCell id="xany" value="X-AnyLabeling&#xa;Manual Refinement" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="1035" y="240" width="165" height="55" as="geometry" />
+    </mxCell>
+
+    <mxCell id="final" value="Final Dataset&#xa;1,157 images + JSON" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="1250" y="240" width="160" height="55" as="geometry" />
+    </mxCell>
+
+    <!-- ── Future step ─────────────────────────────────── -->
+    <mxCell id="yolo" value="[Future]  YOLO11n-OBB Pseudo-label Training" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#aaaaaa;fontColor=#888888;fontSize=10;dashed=1;dashPattern=6 3;" vertex="1" parent="1">
+      <mxGeometry x="1050" y="370" width="340" height="45" as="geometry" />
+    </mxCell>
+
+    <!-- ── Edges ───────────────────────────────────────── -->
+    <!-- blender splits -->
+    <mxCell id="e_bl_ws" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="blender" target="watershed" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- GT → watershed (HSV centroids, dashed) -->
+    <mxCell id="e_gt_ws" value="HSV centroids" style="edgeStyle=orthogonalEdgeStyle;dashed=1;dashPattern=6 3;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=open;endFill=0;" edge="1" source="gt" target="watershed" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- GT → merge (GT labels) -->
+    <mxCell id="e_gt_mg" value="86 GT labels" style="edgeStyle=orthogonalEdgeStyle;dashed=1;dashPattern=6 3;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=open;endFill=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="gt" target="merge" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="720" y="88" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    <!-- main chain -->
+    <mxCell id="e_ws_ne" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="watershed" target="nested" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_ne_mg" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="nested" target="merge" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_mg_qc" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="merge" target="qc" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_qc_xa" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="qc" target="xany" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_xa_fi" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="xany" target="final" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e_fi_yl" style="edgeStyle=orthogonalEdgeStyle;dashed=1;dashPattern=6 3;strokeColor=#aaaaaa;" edge="1" source="final" target="yolo" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+  </root>
+</mxGraphModel>

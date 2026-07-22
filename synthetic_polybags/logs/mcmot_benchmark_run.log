@@ -1,0 +1,84 @@
+
+================================================================
+  MCMOT Server Benchmark
+  Device: mps   Datasets: ['train']
+  Trackers: ['bytetrack', 'botsort']
+  Model: weights_synth_hires.pt   imgsz=1920
+================================================================
+
+  Host:   Aws-MacBook-Air.local
+  GPU:    Apple Silicon MPS
+  CUDA:   N/A
+  PyTorch:2.12.0
+
+>>> Step 0 / 4 — FPS benchmarks (single-cam vs 4-cam MCMOT)
+
+  [single-cam / bytetrack / train]  (front view, 500 frames)
+    3.6 fps  (280.9 ms/frame)    below 25fps
+
+  [single-cam / botsort / train]  (front view, 500 frames)
+    3.5 fps  (285.7 ms/frame)    below 25fps
+
+  [4-cam MCMOT (class_rank) / bytetrack / train]
+    1.1 fps  (906.9 ms/frame)    below 25fps
+  [4-cam MCMOT (class_rank) / botsort / train]
+    1.1 fps  (938.3 ms/frame)    below 25fps
+
+>>> Step 1 / 4 — Intra-camera tracking
+
+  [bytetrack / train]
+    front: 5535 dets  3.5 fps  MOTA=93.4%  IDF1=91.6%
+    back: 4507 dets  3.4 fps  MOTA=81.9%  IDF1=85.9%
+    left: 4481 dets  3.3 fps  MOTA=77.8%  IDF1=77.1%
+    right: 3866 dets  3.3 fps  MOTA=68.4%  IDF1=75.9%
+
+  [botsort / train]
+    front: 5537 dets  3.2 fps  MOTA=97.8%  IDF1=93.1%
+    back: 4507 dets  3.1 fps  MOTA=81.9%  IDF1=86.0%
+    left: 4189 dets  2.9 fps  MOTA=76.0%  IDF1=77.1%
+    right: 3866 dets  3.0 fps  MOTA=70.2%  IDF1=76.6%
+
+>>> Step 2 / 4 — Offline MCMOT association
+
+  [bytetrack / train]
+    no_assoc             MOTA=80.2%  IDF1=26.3%  IDSW=49
+    class_only           MOTA=80.3%  IDF1=64.7%  IDSW=24
+    trk_temporal         MOTA=80.3%  IDF1=61.5%  IDSW=37
+    trk_spatial          MOTA=80.3%  IDF1=56.6%  IDSW=36
+    trk_combined         MOTA=80.3%  IDF1=62.6%  IDSW=36
+
+  [botsort / train]
+    no_assoc             MOTA=81.3%  IDF1=26.5%  IDSW=44
+    class_only           MOTA=81.4%  IDF1=64.6%  IDSW=27
+    trk_temporal         MOTA=81.4%  IDF1=61.9%  IDSW=32
+    trk_spatial          MOTA=81.4%  IDF1=55.8%  IDSW=32
+    trk_combined         MOTA=81.4%  IDF1=59.8%  IDSW=33
+
+>>> Step 3 / 4 — Online real-time MCMOT
+
+  [class_rank / bytetrack / train]
+      0.9 fps  (562s)  MOTA=93.8%  IDF1=54.2%  IDSW=354
+
+  [class_rank / botsort / train]
+      0.9 fps  (552s)  MOTA=96.4%  IDF1=61.7%  IDSW=342
+
+  [class_iou / bytetrack / train]
+      1.0 fps  (479s)  MOTA=95.1%  IDF1=53.8%  IDSW=63
+
+  [class_iou / botsort / train]
+      1.1 fps  (463s)  MOTA=97.7%  IDF1=55.9%  IDSW=64
+
+  [class_smooth / bytetrack / train]
+      0.8 fps  (596s)  MOTA=94.4%  IDF1=54.2%  IDSW=213
+
+  [class_smooth / botsort / train]
+      0.9 fps  (584s)  MOTA=97.0%  IDF1=61.5%  IDSW=212
+
+>>> Step 4 / 4 — Saving results
+
+================================================================
+  Results saved → /Users/awthura/OVGU/AMS/benchmark_mcmot.json
+  Copy to local machine and run:
+    python generate_report.py --from-json benchmark_mcmot.json
+================================================================
+

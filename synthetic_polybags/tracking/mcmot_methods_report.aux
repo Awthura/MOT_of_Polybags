@@ -1,0 +1,31 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Method Taxonomy}{1}{section.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Complete taxonomy of all methods. $N$ = number of active tracks, $T$ = sequence length, $W$ = smoothing window (8 frames).}}{1}{table.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Intra-Camera Trackers (Stage 1)}{1}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}ByteTrack}{1}{subsection.2.1}\protected@file@percent }
+\newlabel{eq:kalman-state}{{1}{2}{}{equation.2.1}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces ByteTrack per-frame update}}{2}{algorithm.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}BoT-SORT}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Offline Inter-Camera Association (Stage 2)}{3}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}\texttt  {no\_assoc} — Baseline}{3}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}\texttt  {class\_only} — Frame-Level Rank Matching}{3}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}\texttt  {trk\_temporal} — Tracklet Temporal Jaccard}{3}{subsection.3.3}\protected@file@percent }
+\newlabel{eq:jaccard}{{8}{3}{}{equation.3.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}\texttt  {trk\_spatial} — Tracklet Spatial Rank}{4}{subsection.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}\texttt  {trk\_combined} — Combined Cost}{4}{subsection.3.5}\protected@file@percent }
+\newlabel{eq:combined}{{13}{4}{\texttt {trk\_combined} — Combined Cost}{equation.3.13}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Online (Real-Time) Inter-Camera Association (Stage 2)}{4}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}\texttt  {class\_rank} — Per-Frame x-Rank}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}\texttt  {class\_iou} — Spatial Hungarian (Normalised $\Delta x$)}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}\texttt  {class\_smooth} — Class Rank with Temporal Smoothing}{5}{subsection.4.3}\protected@file@percent }
+\newlabel{eq:smooth}{{21}{5}{}{equation.4.21}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Comparison of Online Methods}{5}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Offline vs.\ Online: Design Trade-offs}{5}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}References}{5}{section.7}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Online MCMOT associator comparison. $N$: detections per class per frame; $W=8$: smoothing window.}}{6}{table.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Online MCMOT results (MacBook M2, imgsz=1920). fps = scene-frames/s across all 4 cameras. \texttt  {\small  class\_iou} consistently achieves the lowest ID-switch count and highest IDF1.}}{6}{table.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Summary comparison of offline vs.\ online MCMOT approaches.}}{7}{table.4}\protected@file@percent }
+\gdef \@abspage@last{7}

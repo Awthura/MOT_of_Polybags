@@ -1,0 +1,23 @@
+>>> bytetrack: Step 1 single-cam
+    front: 5535 dets  MOTA=93.4%  IDF1=91.6%  time=156s
+    back: 4507 dets  MOTA=81.9%  IDF1=85.9%  time=167s
+    left: 4481 dets  MOTA=77.8%  IDF1=77.1%  time=170s
+    right: 3866 dets  MOTA=68.4%  IDF1=75.9%  time=168s
+>>> bytetrack: Step 2 offline association
+    no_assoc        MOTA=80.2%  IDF1=26.3%  IDSW=49
+    class_only      MOTA=80.3%  IDF1=64.7%  IDSW=24
+    trk_temporal    MOTA=80.3%  IDF1=61.5%  IDSW=37
+    trk_spatial     MOTA=80.3%  IDF1=56.6%  IDSW=36
+    trk_combined    MOTA=80.3%  IDF1=62.6%  IDSW=36
+>>> botsort: Step 1 single-cam
+    front: 5537 dets  MOTA=97.8%  IDF1=93.1%  time=167s
+    back: 4507 dets  MOTA=81.9%  IDF1=86.0%  time=160s
+    left: 4189 dets  MOTA=76.0%  IDF1=77.1%  time=170s
+    right: 3866 dets  MOTA=70.2%  IDF1=76.6%  time=174s
+>>> botsort: Step 2 offline association
+    no_assoc        MOTA=81.3%  IDF1=26.5%  IDSW=44
+    class_only      MOTA=81.4%  IDF1=64.6%  IDSW=27
+    trk_temporal    MOTA=81.4%  IDF1=61.9%  IDSW=32
+    trk_spatial     MOTA=81.4%  IDF1=55.8%  IDSW=32
+    trk_combined    MOTA=81.4%  IDF1=59.8%  IDSW=33
+DONE

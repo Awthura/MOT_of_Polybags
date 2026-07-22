@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1400" dy="420" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1220" pageHeight="420" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- ── Input ── -->
+    <mxCell id="s1" value="&lt;b&gt;DEM Simulation&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;STL mesh + PNG render&lt;br&gt;per frame, 4 cameras&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e4d78;fontColor=#ffffff;strokeColor=#1e4d78;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="20" y="170" width="155" height="75" as="geometry" />
+    </mxCell>
+
+    <!-- ── Step 1 ── -->
+    <mxCell id="s2" value="&lt;b&gt;Separate Meshes&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;Import STL frame&lt;br&gt;one mesh per polybag&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="205" y="170" width="165" height="75" as="geometry" />
+    </mxCell>
+
+    <!-- ── Step 2 ── -->
+    <mxCell id="s3" value="&lt;b&gt;Project Vertices&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;3D → 2D per camera&lt;br&gt;world_to_camera_view()&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="400" y="170" width="175" height="75" as="geometry" />
+    </mxCell>
+
+    <!-- ── Step 3 ── -->
+    <mxCell id="s4" value="&lt;b&gt;Fit OBB&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;minAreaRect on&lt;br&gt;projected convex hull&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="605" y="170" width="155" height="75" as="geometry" />
+    </mxCell>
+
+    <!-- ── Detection branch ── -->
+    <mxCell id="s5a" value="&lt;b&gt;HSV Colour Sample&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;13×13 patch at centroid&lt;br&gt;→ nearest-class threshold&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="810" y="65" width="175" height="75" as="geometry" />
+    </mxCell>
+
+    <mxCell id="outA" value="&lt;b&gt;YOLO OBB Labels&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;class + 8 normalised coords&lt;br&gt;per instance per camera&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e6e36;fontColor=#ffffff;strokeColor=#1e6e36;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="65" width="165" height="75" as="geometry" />
+    </mxCell>
+
+    <!-- ── Tracking branch ── -->
+    <mxCell id="s5b" value="&lt;b&gt;Hungarian Matching&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;3D centroids frame-to-frame&lt;br&gt;→ consistent Track ID&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="810" y="275" width="175" height="75" as="geometry" />
+    </mxCell>
+
+    <mxCell id="outB" value="&lt;b&gt;OBB-MOT Ground Truth&lt;/b&gt;&lt;br&gt;&lt;font style=&apos;font-size:10px&apos;&gt;track ID + OBB corners&lt;br&gt;+ 3D world centroid&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4e2a6e;fontColor=#ffffff;strokeColor=#4e2a6e;fontSize=12;arcSize=12;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="275" width="165" height="75" as="geometry" />
+    </mxCell>
+
+    <!-- ── Main flow arrows ── -->
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s1" target="s2" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s2" target="s3" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;" edge="1" source="s3" target="s4" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ── Fork arrows from OBB step ── -->
+    <mxCell id="e4a" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;strokeColor=#82b366;" edge="1" source="s4" target="s5a" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e4b" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;strokeColor=#9673a6;" edge="1" source="s4" target="s5b" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ── Branch output arrows ── -->
+    <mxCell id="e5a" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;strokeColor=#82b366;" edge="1" source="s5a" target="outA" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e5b" style="edgeStyle=orthogonalEdgeStyle;strokeWidth=2.5;strokeColor=#9673a6;" edge="1" source="s5b" target="outB" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+    <!-- ── Branch labels ── -->
+    <mxCell id="la" value="Detection" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#4a7c39;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="810" y="47" width="175" height="16" as="geometry" /></mxCell>
+    <mxCell id="lb" value="Tracking" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#7a4e9a;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="810" y="257" width="175" height="16" as="geometry" /></mxCell>
+
+    <!-- ── Step labels ── -->
+    <mxCell id="l1" value="Input" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="20" y="250" width="155" height="16" as="geometry" /></mxCell>
+    <mxCell id="l2" value="Step 1" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="205" y="250" width="165" height="16" as="geometry" /></mxCell>
+    <mxCell id="l3" value="Step 2" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="400" y="250" width="175" height="16" as="geometry" /></mxCell>
+    <mxCell id="l4" value="Step 3" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="605" y="250" width="155" height="16" as="geometry" /></mxCell>
+    <mxCell id="l5a" value="Step 4a" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="810" y="145" width="175" height="16" as="geometry" /></mxCell>
+    <mxCell id="l5b" value="Step 4b" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=9;fontColor=#aaaaaa;" vertex="1" parent="1"><mxGeometry x="810" y="355" width="175" height="16" as="geometry" /></mxCell>
+
+  </root>
+</mxGraphModel>
