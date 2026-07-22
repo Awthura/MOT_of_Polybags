@@ -8,7 +8,7 @@ The project has two parallel tracks, kept as separate subdirectories in this rep
 Physics-based DEM simulation rendered in Blender from 4 cameras, with fully automatic YOLO OBB + OBB-MOT ground truth generation, MCMOT tracking, and MOTA/MOTP/IDF1 benchmarking.
 
 ## [`real_polybags/`](real_polybags/README.md)
-Auto-labelling of real conveyor footage using watershed segmentation, with iterative pseudo-label YOLO training. Currently has a broken-symlink data issue — see its README.
+Auto-labelling of real conveyor footage using watershed segmentation, with iterative pseudo-label YOLO training. The old dataset was retired; a new dataset from the supervisor is being integrated — see its README for current status.
 
 ---
 

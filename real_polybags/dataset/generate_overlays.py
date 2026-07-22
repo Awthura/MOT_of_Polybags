@@ -1,7 +1,7 @@
 """
-Generate overlay images for the entire dataset (manual + auto labels).
-Reads YOLO OBB .txt from full_dataset/labels/, draws OBBs on each image,
-saves to full_dataset/overlays/.
+Generate overlay images for the annotated real dataset (train_v11_obb_final,
+val_v11_obb_final). Reads YOLO OBB .txt labels, draws OBBs on each image,
+saves to dataset/annotated/<split>/overlays/.
 """
 
 from pathlib import Path
@@ -12,29 +12,24 @@ import numpy as np
 from tqdm import tqdm
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BASE       = Path("/Users/awthura/OVGU/AMS/real_polybags")
-TRAIN_DIR  = BASE / "YOLO11_OBB_training_data"
-LABELS_DIR = BASE / "full_dataset" / "labels"
-OUT_DIR    = BASE / "full_dataset" / "overlays"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+BASE     = Path("/Users/awthura/OVGU/AMS/real_polybags/dataset/annotated")
+SPLITS   = ["train_v11_obb_final", "val_v11_obb_final"]
 
-CLASSES = ["pink_polybag", "blue_polybag", "yellow_polybag",
-           "grey_polybag",  "green_polybag", "red_polybag"]
+# Class semantics not documented by the supervisor yet — label by raw id
+# until confirmed, then update CLASSES/PALETTE_BGR accordingly.
+CLASSES = ["class_0", "class_1"]
 
 # BGR colours, one per class
 PALETTE_BGR = [
-    (180,  80, 200),   # pink
-    (200,  80,   0),   # blue
-    (  0, 200, 220),   # yellow
-    (160, 160, 160),   # grey
-    (  0, 180,  60),   # green
-    ( 40,  40, 220),   # red
+    ( 40,  40, 220),   # class_0 — red
+    (200,  80,   0),   # class_1 — blue
 ]
 
 # ── Worker ────────────────────────────────────────────────────────────────────
 
-def process(img_path: Path):
-    lbl_path = LABELS_DIR / (img_path.stem + ".txt")
+def process(args):
+    img_path, labels_dir, out_dir = args
+    lbl_path = labels_dir / (img_path.stem + ".txt")
     if not lbl_path.exists():
         return img_path.name, 0
 
@@ -57,34 +52,41 @@ def process(img_path: Path):
 
         cv2.polylines(img, [pts], isClosed=True, color=color, thickness=2)
 
-        # class label near the top-left corner of the box
         cx, cy = pts[:, 0].mean(), pts[:, 1].mean()
-        short  = CLASSES[cid].replace("_polybag", "")
-        cv2.putText(img, short, (int(cx) - 18, int(cy) + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+        label  = CLASSES[cid] if cid < len(CLASSES) else str(cid)
+        cv2.putText(img, label, (int(cx) - 18, int(cy) + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
         n += 1
 
-    cv2.imwrite(str(OUT_DIR / img_path.name), img)
+    cv2.imwrite(str(out_dir / img_path.name), img)
     return img_path.name, n
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    all_images = sorted(TRAIN_DIR.glob("*.png"))
-    print(f"Rendering overlays for {len(all_images)} images  "
-          f"→  {OUT_DIR}")
-
     workers = max(1, cpu_count() - 1)
-    total_boxes = 0
-    skipped     = 0
 
-    with Pool(workers) as pool:
-        for _, n in tqdm(pool.imap_unordered(process, all_images),
-                         total=len(all_images), unit="img"):
-            if n == 0:
-                skipped += 1
-            total_boxes += n
+    for split in SPLITS:
+        split_dir  = BASE / split
+        images_dir = split_dir / "images"
+        labels_dir = split_dir / "labels"
+        out_dir    = split_dir / "overlays"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    saved = len(all_images) - skipped
-    print(f"\nDone — {saved} overlays written, {total_boxes} boxes drawn "
-          f"({skipped} images had no labels).")
+        all_images = sorted(images_dir.glob("*.png")) + sorted(images_dir.glob("*.jpg"))
+        print(f"[{split}] Rendering overlays for {len(all_images)} images  →  {out_dir}")
+
+        tasks = [(p, labels_dir, out_dir) for p in all_images]
+        total_boxes = 0
+        skipped     = 0
+
+        with Pool(workers) as pool:
+            for _, n in tqdm(pool.imap_unordered(process, tasks),
+                             total=len(tasks), unit="img"):
+                if n == 0:
+                    skipped += 1
+                total_boxes += n
+
+        saved = len(all_images) - skipped
+        print(f"[{split}] Done — {saved} overlays written, {total_boxes} boxes drawn "
+              f"({skipped} images had no labels).\n")

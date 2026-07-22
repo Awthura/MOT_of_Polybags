@@ -49,10 +49,17 @@ full_dataset/
 real_data_labels/
 pipeline_output/
 pseudo_label/
+real_polybags/dataset/annotated/
+real_polybags/dataset/unlabelled/
+real_polybags/training/locate_anything/pilot_sample/
+*.cache
 
 # Calibration / review state (local machine-specific)
 review_state.json
 calibration.json
+
+# Local operational notes (cluster paths/usernames, not shared repo content)
+pilot_instructions.md
 
 # YOLO training output
 runs/
