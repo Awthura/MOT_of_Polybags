@@ -1,0 +1,12 @@
+{
+  "real_polybags_annotated": {
+    "annotation": "/home/diky85bu/MOT_of_Polybags/real_polybags/training/locate_anything/jsonl_data_multibox_test/train.jsonl",
+    "root": "/home/diky85bu/MOT_of_Polybags/real_polybags/dataset/annotated/train_v11_obb_final",
+    "repeat_time": 3.0
+  },
+  "real_polybags_pseudo_unlabelled": {
+    "annotation": "/home/diky85bu/MOT_of_Polybags/real_polybags/training/locate_anything/jsonl_data_round2/pseudo_unlabelled.jsonl",
+    "root": "/home/diky85bu/MOT_of_Polybags/real_polybags/training/locate_anything/jsonl_data_round2/images_640x480_letterboxed",
+    "repeat_time": 1.0
+  }
+}

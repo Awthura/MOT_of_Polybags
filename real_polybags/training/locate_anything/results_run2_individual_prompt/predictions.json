@@ -1,0 +1,1368 @@
+{
+  "annotated/rgb_frame1_000060.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><700><429><810><667></box><box><765><223><872><333></box><box><778><471><899><589></box><box><802><327><884><477></box><box><816><83><911><202></box><box><827><562><956><681></box><box><831><190><933><308></box><box><855><298><977><433></box><box><875><421><998><577></box><box><938><306><1000><410></box><box><952><398><1000><531></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 448.0,
+        "y1": 205.92,
+        "x2": 518.4000000000001,
+        "y2": 320.16
+      },
+      {
+        "x1": 489.6,
+        "y1": 107.04,
+        "x2": 558.08,
+        "y2": 159.84
+      },
+      {
+        "x1": 497.92,
+        "y1": 226.07999999999998,
+        "x2": 575.36,
+        "y2": 282.71999999999997
+      },
+      {
+        "x1": 513.28,
+        "y1": 156.96,
+        "x2": 565.76,
+        "y2": 228.95999999999998
+      },
+      {
+        "x1": 522.24,
+        "y1": 39.84,
+        "x2": 583.04,
+        "y2": 96.96000000000001
+      },
+      {
+        "x1": 529.28,
+        "y1": 269.76000000000005,
+        "x2": 611.8399999999999,
+        "y2": 326.88
+      },
+      {
+        "x1": 531.8399999999999,
+        "y1": 91.2,
+        "x2": 597.12,
+        "y2": 147.84
+      },
+      {
+        "x1": 547.2,
+        "y1": 143.04,
+        "x2": 625.28,
+        "y2": 207.84
+      },
+      {
+        "x1": 560.0,
+        "y1": 202.07999999999998,
+        "x2": 638.72,
+        "y2": 276.96
+      },
+      {
+        "x1": 600.3199999999999,
+        "y1": 146.88,
+        "x2": 640.0,
+        "y2": 196.79999999999998
+      },
+      {
+        "x1": 609.28,
+        "y1": 191.04000000000002,
+        "x2": 640.0,
+        "y2": 254.88000000000002
+      }
+    ],
+    "infer_seconds": 2.146307945251465
+  },
+  "annotated/rgb_frame1_000434.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><597><698><682><817></box><box><608><567><677><710></box><box><611><217><727><350></box><box><627><769><758><925></box><box><655><338><734><475></box><box><663><15><775><144></box><box><674><575><759><715></box><box><683><155><795><298></box><box><684><365><805><519></box><box><730><521><837><629></box><box><731><610><856><750></box><box><794><681><936><852></box><box><798><510><928><673></box><box><881><302><998><423></box><box><931><427><1000><556></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 382.08,
+        "y1": 335.03999999999996,
+        "x2": 436.48,
+        "y2": 392.15999999999997
+      },
+      {
+        "x1": 389.12,
+        "y1": 272.15999999999997,
+        "x2": 433.28000000000003,
+        "y2": 340.79999999999995
+      },
+      {
+        "x1": 391.03999999999996,
+        "y1": 104.16,
+        "x2": 465.28,
+        "y2": 168.0
+      },
+      {
+        "x1": 401.28,
+        "y1": 369.12,
+        "x2": 485.12,
+        "y2": 444.0
+      },
+      {
+        "x1": 419.20000000000005,
+        "y1": 162.24,
+        "x2": 469.76,
+        "y2": 228.0
+      },
+      {
+        "x1": 424.32000000000005,
+        "y1": 7.199999999999999,
+        "x2": 496.0,
+        "y2": 69.11999999999999
+      },
+      {
+        "x1": 431.36,
+        "y1": 276.0,
+        "x2": 485.76,
+        "y2": 343.2
+      },
+      {
+        "x1": 437.12,
+        "y1": 74.4,
+        "x2": 508.8,
+        "y2": 143.04
+      },
+      {
+        "x1": 437.76000000000005,
+        "y1": 175.2,
+        "x2": 515.2,
+        "y2": 249.12
+      },
+      {
+        "x1": 467.2,
+        "y1": 250.08,
+        "x2": 535.68,
+        "y2": 301.92
+      },
+      {
+        "x1": 467.84,
+        "y1": 292.8,
+        "x2": 547.84,
+        "y2": 360.0
+      },
+      {
+        "x1": 508.16,
+        "y1": 326.88,
+        "x2": 599.0400000000001,
+        "y2": 408.96
+      },
+      {
+        "x1": 510.72,
+        "y1": 244.8,
+        "x2": 593.9200000000001,
+        "y2": 323.04
+      },
+      {
+        "x1": 563.84,
+        "y1": 144.96,
+        "x2": 638.72,
+        "y2": 203.04
+      },
+      {
+        "x1": 595.84,
+        "y1": 204.96,
+        "x2": 640.0,
+        "y2": 266.88
+      }
+    ],
+    "infer_seconds": 1.1290700435638428
+  },
+  "annotated/rgb_frame1_000623.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><395><438><516><585></box><box><428><285><533><442></box><box><555><281><672><504></box><box><602><575><688><738></box><box><603><725><692><846></box><box><611><283><702><429></box><box><644><804><781><965></box><box><664><425><808><590></box><box><689><623><809><796></box><box><758><658><895><850></box><box><764><550><886><690></box><box><841><700><981><898></box><box><856><548><991><719></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 252.8,
+        "y1": 210.24,
+        "x2": 330.24,
+        "y2": 280.79999999999995
+      },
+      {
+        "x1": 273.92,
+        "y1": 136.79999999999998,
+        "x2": 341.12,
+        "y2": 212.16
+      },
+      {
+        "x1": 355.20000000000005,
+        "y1": 134.88000000000002,
+        "x2": 430.08000000000004,
+        "y2": 241.92000000000002
+      },
+      {
+        "x1": 385.28,
+        "y1": 276.0,
+        "x2": 440.31999999999994,
+        "y2": 354.24
+      },
+      {
+        "x1": 385.91999999999996,
+        "y1": 348.0,
+        "x2": 442.88,
+        "y2": 406.08
+      },
+      {
+        "x1": 391.03999999999996,
+        "y1": 135.83999999999997,
+        "x2": 449.28,
+        "y2": 205.92
+      },
+      {
+        "x1": 412.16,
+        "y1": 385.92,
+        "x2": 499.84000000000003,
+        "y2": 463.2
+      },
+      {
+        "x1": 424.96000000000004,
+        "y1": 204.0,
+        "x2": 517.12,
+        "y2": 283.2
+      },
+      {
+        "x1": 440.96,
+        "y1": 299.04,
+        "x2": 517.76,
+        "y2": 382.08000000000004
+      },
+      {
+        "x1": 485.12,
+        "y1": 315.84000000000003,
+        "x2": 572.8,
+        "y2": 408.0
+      },
+      {
+        "x1": 488.96000000000004,
+        "y1": 264.0,
+        "x2": 567.04,
+        "y2": 331.2
+      },
+      {
+        "x1": 538.24,
+        "y1": 336.0,
+        "x2": 627.84,
+        "y2": 431.04
+      },
+      {
+        "x1": 547.84,
+        "y1": 263.04,
+        "x2": 634.24,
+        "y2": 345.12
+      }
+    ],
+    "infer_seconds": 0.7641324996948242
+  },
+  "annotated/rgb_frame1_000679.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><298><177><417><340></box><box><312><573><428><712></box><box><464><488><558><652></box><box><522><360><667><565></box><box><595><762><688><877></box><box><605><608><686><775></box><box><644><842><783><998></box><box><651><508><768><633></box><box><687><656><806><840></box><box><758><567><870><715></box><box><759><681><888><875></box><box><839><717><975><915></box><box><853><569><970><721></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 190.72,
+        "y1": 84.96,
+        "x2": 266.88,
+        "y2": 163.20000000000002
+      },
+      {
+        "x1": 199.68,
+        "y1": 275.03999999999996,
+        "x2": 273.92,
+        "y2": 341.76
+      },
+      {
+        "x1": 296.96000000000004,
+        "y1": 234.24,
+        "x2": 357.12,
+        "y2": 312.96000000000004
+      },
+      {
+        "x1": 334.08000000000004,
+        "y1": 172.79999999999998,
+        "x2": 426.88,
+        "y2": 271.2
+      },
+      {
+        "x1": 380.79999999999995,
+        "y1": 365.76,
+        "x2": 440.31999999999994,
+        "y2": 420.96
+      },
+      {
+        "x1": 387.2,
+        "y1": 291.84,
+        "x2": 439.04,
+        "y2": 372.0
+      },
+      {
+        "x1": 412.16,
+        "y1": 404.15999999999997,
+        "x2": 501.12,
+        "y2": 479.04
+      },
+      {
+        "x1": 416.64,
+        "y1": 243.84,
+        "x2": 491.52,
+        "y2": 303.84000000000003
+      },
+      {
+        "x1": 439.68000000000006,
+        "y1": 314.88,
+        "x2": 515.84,
+        "y2": 403.2
+      },
+      {
+        "x1": 485.12,
+        "y1": 272.15999999999997,
+        "x2": 556.8,
+        "y2": 343.2
+      },
+      {
+        "x1": 485.76,
+        "y1": 326.88,
+        "x2": 568.32,
+        "y2": 420.0
+      },
+      {
+        "x1": 536.96,
+        "y1": 344.15999999999997,
+        "x2": 624.0,
+        "y2": 439.20000000000005
+      },
+      {
+        "x1": 545.92,
+        "y1": 273.12,
+        "x2": 620.8,
+        "y2": 346.08
+      }
+    ],
+    "infer_seconds": 0.535444974899292
+  },
+  "annotated/rgb_frame1_001036.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.2732245922088623
+  },
+  "annotated/rgb_frame1_001155.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.24228477478027344
+  },
+  "annotated/rgb_frame1_001180.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.24260544776916504
+  },
+  "annotated/rgb_frame1_001205.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.24237966537475586
+  },
+  "annotated/rgb_frame1_002009.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><356><679><532><944></box><box><490><559><651><756></box><box><554><504><662><565></box><box><612><402><712><454></box><box><638><332><730><390></box><box><645><502><770><569></box><box><646><450><749><513></box><box><663><544><777><621></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 227.83999999999997,
+        "y1": 325.92,
+        "x2": 340.48,
+        "y2": 453.12
+      },
+      {
+        "x1": 313.6,
+        "y1": 268.32000000000005,
+        "x2": 416.64,
+        "y2": 362.88
+      },
+      {
+        "x1": 354.56000000000006,
+        "y1": 241.92000000000002,
+        "x2": 423.68,
+        "y2": 271.2
+      },
+      {
+        "x1": 391.68,
+        "y1": 192.96,
+        "x2": 455.67999999999995,
+        "y2": 217.92000000000002
+      },
+      {
+        "x1": 408.32,
+        "y1": 159.36,
+        "x2": 467.2,
+        "y2": 187.20000000000002
+      },
+      {
+        "x1": 412.8,
+        "y1": 240.96,
+        "x2": 492.8,
+        "y2": 273.12
+      },
+      {
+        "x1": 413.44,
+        "y1": 216.0,
+        "x2": 479.36,
+        "y2": 246.24
+      },
+      {
+        "x1": 424.32000000000005,
+        "y1": 261.12,
+        "x2": 497.28000000000003,
+        "y2": 298.08
+      }
+    ],
+    "infer_seconds": 0.5590662956237793
+  },
+  "annotated/rgb_frame_000053.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><186><594><279><683></box><box><201><694><320><812></box><box><297><604><394><692></box><box><317><491><392><556></box><box><359><690><461><810></box><box><415><583><504><677></box><box><425><452><505><523></box><box><496><538><607><638></box><box><507><681><617><808></box><box><609><629><743><729></box><box><627><506><700><579></box><box><628><725><726><853></box><box><643><435><710><500></box><box><731><421><822><481></box><box><738><541><871><633></box><box><767><639><882><744></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 119.03999999999999,
+        "y1": 285.12,
+        "x2": 178.56,
+        "y2": 327.84000000000003
+      },
+      {
+        "x1": 128.64000000000001,
+        "y1": 333.12,
+        "x2": 204.8,
+        "y2": 389.76000000000005
+      },
+      {
+        "x1": 190.07999999999998,
+        "y1": 289.92,
+        "x2": 252.16000000000003,
+        "y2": 332.15999999999997
+      },
+      {
+        "x1": 202.88,
+        "y1": 235.68,
+        "x2": 250.88,
+        "y2": 266.88
+      },
+      {
+        "x1": 229.76,
+        "y1": 331.2,
+        "x2": 295.04,
+        "y2": 388.8
+      },
+      {
+        "x1": 265.59999999999997,
+        "y1": 279.84,
+        "x2": 322.56,
+        "y2": 324.96000000000004
+      },
+      {
+        "x1": 272.0,
+        "y1": 216.96,
+        "x2": 323.2,
+        "y2": 251.04000000000002
+      },
+      {
+        "x1": 317.44,
+        "y1": 258.24,
+        "x2": 388.48,
+        "y2": 306.24
+      },
+      {
+        "x1": 324.48,
+        "y1": 326.88,
+        "x2": 394.88,
+        "y2": 387.84000000000003
+      },
+      {
+        "x1": 389.76,
+        "y1": 301.92,
+        "x2": 475.52,
+        "y2": 349.92
+      },
+      {
+        "x1": 401.28,
+        "y1": 242.88,
+        "x2": 448.0,
+        "y2": 277.91999999999996
+      },
+      {
+        "x1": 401.92,
+        "y1": 348.0,
+        "x2": 464.64,
+        "y2": 409.44
+      },
+      {
+        "x1": 411.52,
+        "y1": 208.8,
+        "x2": 454.4,
+        "y2": 240.0
+      },
+      {
+        "x1": 467.84,
+        "y1": 202.07999999999998,
+        "x2": 526.0799999999999,
+        "y2": 230.88
+      },
+      {
+        "x1": 472.32,
+        "y1": 259.68,
+        "x2": 557.44,
+        "y2": 303.84000000000003
+      },
+      {
+        "x1": 490.88,
+        "y1": 306.72,
+        "x2": 564.48,
+        "y2": 357.12
+      }
+    ],
+    "infer_seconds": 0.865375280380249
+  },
+  "annotated/rgb_frame_000109.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><186><594><278><683></box><box><201><694><320><812></box><box><297><604><394><692></box><box><317><491><392><556></box><box><358><690><461><810></box><box><415><583><505><677></box><box><425><452><504><523></box><box><497><538><607><638></box><box><507><681><617><808></box><box><609><629><744><729></box><box><627><506><700><579></box><box><628><726><726><854></box><box><643><435><710><500></box><box><730><421><822><481></box><box><738><541><871><633></box><box><766><639><882><743></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 119.03999999999999,
+        "y1": 285.12,
+        "x2": 177.92000000000002,
+        "y2": 327.84000000000003
+      },
+      {
+        "x1": 128.64000000000001,
+        "y1": 333.12,
+        "x2": 204.8,
+        "y2": 389.76000000000005
+      },
+      {
+        "x1": 190.07999999999998,
+        "y1": 289.92,
+        "x2": 252.16000000000003,
+        "y2": 332.15999999999997
+      },
+      {
+        "x1": 202.88,
+        "y1": 235.68,
+        "x2": 250.88,
+        "y2": 266.88
+      },
+      {
+        "x1": 229.12,
+        "y1": 331.2,
+        "x2": 295.04,
+        "y2": 388.8
+      },
+      {
+        "x1": 265.59999999999997,
+        "y1": 279.84,
+        "x2": 323.2,
+        "y2": 324.96000000000004
+      },
+      {
+        "x1": 272.0,
+        "y1": 216.96,
+        "x2": 322.56,
+        "y2": 251.04000000000002
+      },
+      {
+        "x1": 318.08,
+        "y1": 258.24,
+        "x2": 388.48,
+        "y2": 306.24
+      },
+      {
+        "x1": 324.48,
+        "y1": 326.88,
+        "x2": 394.88,
+        "y2": 387.84000000000003
+      },
+      {
+        "x1": 389.76,
+        "y1": 301.92,
+        "x2": 476.15999999999997,
+        "y2": 349.92
+      },
+      {
+        "x1": 401.28,
+        "y1": 242.88,
+        "x2": 448.0,
+        "y2": 277.91999999999996
+      },
+      {
+        "x1": 401.92,
+        "y1": 348.48,
+        "x2": 464.64,
+        "y2": 409.92
+      },
+      {
+        "x1": 411.52,
+        "y1": 208.8,
+        "x2": 454.4,
+        "y2": 240.0
+      },
+      {
+        "x1": 467.2,
+        "y1": 202.07999999999998,
+        "x2": 526.0799999999999,
+        "y2": 230.88
+      },
+      {
+        "x1": 472.32,
+        "y1": 259.68,
+        "x2": 557.44,
+        "y2": 303.84000000000003
+      },
+      {
+        "x1": 490.24,
+        "y1": 306.72,
+        "x2": 564.48,
+        "y2": 356.64
+      }
+    ],
+    "infer_seconds": 0.6958706378936768
+  },
+  "annotated/rgb_frame_000165.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><185><593><279><683></box><box><201><694><320><812></box><box><297><605><394><692></box><box><317><491><392><558></box><box><358><691><462><810></box><box><415><584><504><677></box><box><424><452><505><523></box><box><496><538><607><638></box><box><507><681><617><808></box><box><609><629><744><729></box><box><627><506><700><579></box><box><628><726><726><854></box><box><643><435><710><500></box><box><730><421><822><483></box><box><738><541><871><635></box><box><767><639><882><743></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 118.4,
+        "y1": 284.64,
+        "x2": 178.56,
+        "y2": 327.84000000000003
+      },
+      {
+        "x1": 128.64000000000001,
+        "y1": 333.12,
+        "x2": 204.8,
+        "y2": 389.76000000000005
+      },
+      {
+        "x1": 190.07999999999998,
+        "y1": 290.4,
+        "x2": 252.16000000000003,
+        "y2": 332.15999999999997
+      },
+      {
+        "x1": 202.88,
+        "y1": 235.68,
+        "x2": 250.88,
+        "y2": 267.84000000000003
+      },
+      {
+        "x1": 229.12,
+        "y1": 331.67999999999995,
+        "x2": 295.68,
+        "y2": 388.8
+      },
+      {
+        "x1": 265.59999999999997,
+        "y1": 280.32,
+        "x2": 322.56,
+        "y2": 324.96000000000004
+      },
+      {
+        "x1": 271.36,
+        "y1": 216.96,
+        "x2": 323.2,
+        "y2": 251.04000000000002
+      },
+      {
+        "x1": 317.44,
+        "y1": 258.24,
+        "x2": 388.48,
+        "y2": 306.24
+      },
+      {
+        "x1": 324.48,
+        "y1": 326.88,
+        "x2": 394.88,
+        "y2": 387.84000000000003
+      },
+      {
+        "x1": 389.76,
+        "y1": 301.92,
+        "x2": 476.15999999999997,
+        "y2": 349.92
+      },
+      {
+        "x1": 401.28,
+        "y1": 242.88,
+        "x2": 448.0,
+        "y2": 277.91999999999996
+      },
+      {
+        "x1": 401.92,
+        "y1": 348.48,
+        "x2": 464.64,
+        "y2": 409.92
+      },
+      {
+        "x1": 411.52,
+        "y1": 208.8,
+        "x2": 454.4,
+        "y2": 240.0
+      },
+      {
+        "x1": 467.2,
+        "y1": 202.07999999999998,
+        "x2": 526.0799999999999,
+        "y2": 231.84
+      },
+      {
+        "x1": 472.32,
+        "y1": 259.68,
+        "x2": 557.44,
+        "y2": 304.8
+      },
+      {
+        "x1": 490.88,
+        "y1": 306.72,
+        "x2": 564.48,
+        "y2": 356.64
+      }
+    ],
+    "infer_seconds": 0.695084810256958
+  },
+  "annotated/rgb_frame_000221.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><185><594><279><683></box><box><201><694><320><812></box><box><297><604><394><692></box><box><317><491><393><558></box><box><358><690><461><810></box><box><414><583><505><677></box><box><425><452><504><523></box><box><496><538><607><638></box><box><506><681><617><808></box><box><609><629><743><728></box><box><627><508><700><581></box><box><628><725><726><854></box><box><643><436><710><500></box><box><730><421><823><483></box><box><738><541><872><635></box><box><766><639><882><744></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 118.4,
+        "y1": 285.12,
+        "x2": 178.56,
+        "y2": 327.84000000000003
+      },
+      {
+        "x1": 128.64000000000001,
+        "y1": 333.12,
+        "x2": 204.8,
+        "y2": 389.76000000000005
+      },
+      {
+        "x1": 190.07999999999998,
+        "y1": 289.92,
+        "x2": 252.16000000000003,
+        "y2": 332.15999999999997
+      },
+      {
+        "x1": 202.88,
+        "y1": 235.68,
+        "x2": 251.52,
+        "y2": 267.84000000000003
+      },
+      {
+        "x1": 229.12,
+        "y1": 331.2,
+        "x2": 295.04,
+        "y2": 388.8
+      },
+      {
+        "x1": 264.96,
+        "y1": 279.84,
+        "x2": 323.2,
+        "y2": 324.96000000000004
+      },
+      {
+        "x1": 272.0,
+        "y1": 216.96,
+        "x2": 322.56,
+        "y2": 251.04000000000002
+      },
+      {
+        "x1": 317.44,
+        "y1": 258.24,
+        "x2": 388.48,
+        "y2": 306.24
+      },
+      {
+        "x1": 323.84000000000003,
+        "y1": 326.88,
+        "x2": 394.88,
+        "y2": 387.84000000000003
+      },
+      {
+        "x1": 389.76,
+        "y1": 301.92,
+        "x2": 475.52,
+        "y2": 349.44
+      },
+      {
+        "x1": 401.28,
+        "y1": 243.84,
+        "x2": 448.0,
+        "y2": 278.88
+      },
+      {
+        "x1": 401.92,
+        "y1": 348.0,
+        "x2": 464.64,
+        "y2": 409.92
+      },
+      {
+        "x1": 411.52,
+        "y1": 209.28,
+        "x2": 454.4,
+        "y2": 240.0
+      },
+      {
+        "x1": 467.2,
+        "y1": 202.07999999999998,
+        "x2": 526.72,
+        "y2": 231.84
+      },
+      {
+        "x1": 472.32,
+        "y1": 259.68,
+        "x2": 558.08,
+        "y2": 304.8
+      },
+      {
+        "x1": 490.24,
+        "y1": 306.72,
+        "x2": 564.48,
+        "y2": 357.12
+      }
+    ],
+    "infer_seconds": 0.6949353218078613
+  },
+  "annotated/rgb_frame_000277.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><186><592><279><681></box><box><199><688><320><787></box><box><297><604><393><687></box><box><317><490><392><553></box><box><358><682><462><804></box><box><415><582><504><673></box><box><425><450><505><521></box><box><497><535><608><636></box><box><507><678><617><806></box><box><609><627><744><726></box><box><628><723><700><850></box><box><629><506><700><577></box><box><643><434><710><499></box><box><731><421><823><481></box><box><739><540><871><632></box><box><767><638><882><741></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 119.03999999999999,
+        "y1": 284.15999999999997,
+        "x2": 178.56,
+        "y2": 326.88
+      },
+      {
+        "x1": 127.36000000000001,
+        "y1": 330.23999999999995,
+        "x2": 204.8,
+        "y2": 377.76
+      },
+      {
+        "x1": 190.07999999999998,
+        "y1": 289.92,
+        "x2": 251.52,
+        "y2": 329.76000000000005
+      },
+      {
+        "x1": 202.88,
+        "y1": 235.2,
+        "x2": 250.88,
+        "y2": 265.44
+      },
+      {
+        "x1": 229.12,
+        "y1": 327.36,
+        "x2": 295.68,
+        "y2": 385.92
+      },
+      {
+        "x1": 265.59999999999997,
+        "y1": 279.35999999999996,
+        "x2": 322.56,
+        "y2": 323.04
+      },
+      {
+        "x1": 272.0,
+        "y1": 216.0,
+        "x2": 323.2,
+        "y2": 250.08
+      },
+      {
+        "x1": 318.08,
+        "y1": 256.8,
+        "x2": 389.12,
+        "y2": 305.28000000000003
+      },
+      {
+        "x1": 324.48,
+        "y1": 325.44,
+        "x2": 394.88,
+        "y2": 386.88
+      },
+      {
+        "x1": 389.76,
+        "y1": 300.96,
+        "x2": 476.15999999999997,
+        "y2": 348.48
+      },
+      {
+        "x1": 401.92,
+        "y1": 347.03999999999996,
+        "x2": 448.0,
+        "y2": 408.0
+      },
+      {
+        "x1": 402.56,
+        "y1": 242.88,
+        "x2": 448.0,
+        "y2": 276.96
+      },
+      {
+        "x1": 411.52,
+        "y1": 208.32,
+        "x2": 454.4,
+        "y2": 239.52
+      },
+      {
+        "x1": 467.84,
+        "y1": 202.07999999999998,
+        "x2": 526.72,
+        "y2": 230.88
+      },
+      {
+        "x1": 472.96,
+        "y1": 259.20000000000005,
+        "x2": 557.44,
+        "y2": 303.36
+      },
+      {
+        "x1": 490.88,
+        "y1": 306.24,
+        "x2": 564.48,
+        "y2": 355.68
+      }
+    ],
+    "infer_seconds": 0.6811556816101074
+  },
+  "annotated/rgb_frame_000555.png": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><434><367><540><510></box><box><490><455><606><602></box><box><598><702><684><815></box><box><611><573><680><712></box><box><632><775><762><931></box><box><676><383><759><519></box><box><681><583><764><721></box><box><711><417><834><565></box><box><737><529><858><638></box><box><738><615><859><763></box><box><798><683><936><850></box><box><806><521><934><677></box><box><849><338><946><469></box><box><929><348><1000><435></box><box><945><429><1000><556></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 277.76,
+        "y1": 176.16,
+        "x2": 345.6,
+        "y2": 244.8
+      },
+      {
+        "x1": 313.6,
+        "y1": 218.4,
+        "x2": 387.84,
+        "y2": 288.96
+      },
+      {
+        "x1": 382.71999999999997,
+        "y1": 336.96,
+        "x2": 437.76000000000005,
+        "y2": 391.2
+      },
+      {
+        "x1": 391.03999999999996,
+        "y1": 275.03999999999996,
+        "x2": 435.20000000000005,
+        "y2": 341.76
+      },
+      {
+        "x1": 404.48,
+        "y1": 372.0,
+        "x2": 487.68,
+        "y2": 446.88
+      },
+      {
+        "x1": 432.64000000000004,
+        "y1": 183.84,
+        "x2": 485.76,
+        "y2": 249.12
+      },
+      {
+        "x1": 435.84000000000003,
+        "y1": 279.84,
+        "x2": 488.96000000000004,
+        "y2": 346.08
+      },
+      {
+        "x1": 455.03999999999996,
+        "y1": 200.16,
+        "x2": 533.76,
+        "y2": 271.2
+      },
+      {
+        "x1": 471.68,
+        "y1": 253.92000000000002,
+        "x2": 549.12,
+        "y2": 306.24
+      },
+      {
+        "x1": 472.32,
+        "y1": 295.2,
+        "x2": 549.76,
+        "y2": 366.24
+      },
+      {
+        "x1": 510.72,
+        "y1": 327.84000000000003,
+        "x2": 599.0400000000001,
+        "y2": 408.0
+      },
+      {
+        "x1": 515.84,
+        "y1": 250.08,
+        "x2": 597.76,
+        "y2": 324.96000000000004
+      },
+      {
+        "x1": 543.36,
+        "y1": 162.24,
+        "x2": 605.4399999999999,
+        "y2": 225.11999999999998
+      },
+      {
+        "x1": 594.5600000000001,
+        "y1": 167.04,
+        "x2": 640.0,
+        "y2": 208.8
+      },
+      {
+        "x1": 604.8,
+        "y1": 205.92,
+        "x2": 640.0,
+        "y2": 266.88
+      }
+    ],
+    "infer_seconds": 0.7127895355224609
+  },
+  "unlabelled/basler_1_1280x720_20260528_092854/basler_1_1280x720_20260528_092854_frame_0000000.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.7746193408966064
+  },
+  "unlabelled/basler_1_1280x720_20260528_092854/basler_1_1280x720_20260528_092854_frame_0000086.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5181999206542969
+  },
+  "unlabelled/basler_1_1280x720_20260528_092854/basler_1_1280x720_20260528_092854_frame_0000172.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.517564058303833
+  },
+  "unlabelled/basler_1_1280x720_20260528_092854/basler_1_1280x720_20260528_092854_frame_0000258.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5167334079742432
+  },
+  "unlabelled/basler_1_1280x720_20260528_092854/basler_1_1280x720_20260528_092854_frame_0000344.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5171611309051514
+  },
+  "unlabelled/basler_2_1280x720_20260528_092854/basler_2_1280x720_20260528_092854_frame_0000000.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5205764770507812
+  },
+  "unlabelled/basler_2_1280x720_20260528_092854/basler_2_1280x720_20260528_092854_frame_0000150.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5211291313171387
+  },
+  "unlabelled/basler_2_1280x720_20260528_092854/basler_2_1280x720_20260528_092854_frame_0000300.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><416><297><581><560></box><box><439><556><561><822></box><box><451><0><584><265></box><box><484><736><633><946></box><box><555><0><688><128></box><box><593><875><730><1000></box><box><670><217><820><464></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 532.48,
+        "y1": 213.84,
+        "x2": 743.68,
+        "y2": 403.20000000000005
+      },
+      {
+        "x1": 561.92,
+        "y1": 400.32000000000005,
+        "x2": 718.08,
+        "y2": 591.8399999999999
+      },
+      {
+        "x1": 577.28,
+        "y1": 0.0,
+        "x2": 747.52,
+        "y2": 190.8
+      },
+      {
+        "x1": 619.52,
+        "y1": 529.92,
+        "x2": 810.24,
+        "y2": 681.12
+      },
+      {
+        "x1": 710.4000000000001,
+        "y1": 0.0,
+        "x2": 880.6399999999999,
+        "y2": 92.16
+      },
+      {
+        "x1": 759.04,
+        "y1": 630.0,
+        "x2": 934.4,
+        "y2": 720.0
+      },
+      {
+        "x1": 857.6,
+        "y1": 156.24,
+        "x2": 1049.6,
+        "y2": 334.08000000000004
+      }
+    ],
+    "infer_seconds": 1.0814032554626465
+  },
+  "unlabelled/basler_2_1280x720_20260528_092854/basler_2_1280x720_20260528_092854_frame_0000450.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5191502571105957
+  },
+  "unlabelled/basler_2_1280x720_20260528_092854/basler_2_1280x720_20260528_092854_frame_0000600.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5199661254882812
+  },
+  "unlabelled/lucid_1280x720_20260528_092854/lucid_1280x720_20260528_092854_frame_0000000.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5188078880310059
+  },
+  "unlabelled/lucid_1280x720_20260528_092854/lucid_1280x720_20260528_092854_frame_0000049.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><397><839><566><1000></box><box><438><0><547><149></box><box><516><15><644><199></box><box><523><635><686><944></box><box><627><0><672><28></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 508.16,
+        "y1": 604.0799999999999,
+        "x2": 724.4799999999999,
+        "y2": 720.0
+      },
+      {
+        "x1": 560.64,
+        "y1": 0.0,
+        "x2": 700.1600000000001,
+        "y2": 107.28
+      },
+      {
+        "x1": 660.48,
+        "y1": 10.799999999999999,
+        "x2": 824.32,
+        "y2": 143.28
+      },
+      {
+        "x1": 669.44,
+        "y1": 457.2,
+        "x2": 878.08,
+        "y2": 679.68
+      },
+      {
+        "x1": 802.56,
+        "y1": 0.0,
+        "x2": 860.1600000000001,
+        "y2": 20.16
+      }
+    ],
+    "infer_seconds": 0.9549753665924072
+  },
+  "unlabelled/lucid_1280x720_20260528_092854/lucid_1280x720_20260528_092854_frame_0000098.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><427><889><532><1000></box><box><458><0><562><48></box><box><484><719><631><911></box><box><488><240><632><425></box><box><495><500><652><758></box><box><570><692><736><994></box><box><605><144><772><394></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 546.56,
+        "y1": 640.08,
+        "x2": 680.96,
+        "y2": 720.0
+      },
+      {
+        "x1": 586.24,
+        "y1": 0.0,
+        "x2": 719.3600000000001,
+        "y2": 34.56
+      },
+      {
+        "x1": 619.52,
+        "y1": 517.68,
+        "x2": 807.6800000000001,
+        "y2": 655.9200000000001
+      },
+      {
+        "x1": 624.64,
+        "y1": 172.79999999999998,
+        "x2": 808.96,
+        "y2": 306.0
+      },
+      {
+        "x1": 633.6,
+        "y1": 360.0,
+        "x2": 834.5600000000001,
+        "y2": 545.76
+      },
+      {
+        "x1": 729.5999999999999,
+        "y1": 498.23999999999995,
+        "x2": 942.0799999999999,
+        "y2": 715.68
+      },
+      {
+        "x1": 774.4,
+        "y1": 103.67999999999999,
+        "x2": 988.1600000000001,
+        "y2": 283.68
+      }
+    ],
+    "infer_seconds": 0.6667656898498535
+  },
+  "unlabelled/lucid_1280x720_20260528_092854/lucid_1280x720_20260528_092854_frame_0000147.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5174832344055176
+  },
+  "unlabelled/lucid_1280x720_20260528_092854/lucid_1280x720_20260528_092854_frame_0000196.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5168752670288086
+  },
+  "unlabelled/rgbd_1_color_1280x720_20260528_092854/rgbd_1_color_1280x720_20260528_092854_frame_0000000.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><684><799><891><1000></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 875.5200000000001,
+        "y1": 575.2800000000001,
+        "x2": 1140.48,
+        "y2": 720.0
+      }
+    ],
+    "infer_seconds": 0.5195066928863525
+  },
+  "unlabelled/rgbd_1_color_1280x720_20260528_092854/rgbd_1_color_1280x720_20260528_092854_frame_0000150.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><414><319><527><500></box><box><494><190><599><386></box><box><523><915><605><999></box><box><684><800><891><999></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 529.92,
+        "y1": 229.68,
+        "x2": 674.5600000000001,
+        "y2": 360.0
+      },
+      {
+        "x1": 632.3199999999999,
+        "y1": 136.8,
+        "x2": 766.72,
+        "y2": 277.92
+      },
+      {
+        "x1": 669.44,
+        "y1": 658.8000000000001,
+        "x2": 774.4,
+        "y2": 719.28
+      },
+      {
+        "x1": 875.5200000000001,
+        "y1": 576.0,
+        "x2": 1140.48,
+        "y2": 719.28
+      }
+    ],
+    "infer_seconds": 0.5913410186767578
+  },
+  "unlabelled/rgbd_1_color_1280x720_20260528_092854/rgbd_1_color_1280x720_20260528_092854_frame_0000300.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><393><811><509><1000></box><box><430><226><500><397></box><box><443><671><516><846></box><box><465><701><577><904></box><box><467><122><541><247></box><box><471><0><575><147></box><box><488><856><587><1000></box><box><489><474><601><668></box><box><523><97><630><297></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 503.04,
+        "y1": 583.9200000000001,
+        "x2": 651.52,
+        "y2": 720.0
+      },
+      {
+        "x1": 550.4,
+        "y1": 162.72,
+        "x2": 640.0,
+        "y2": 285.84000000000003
+      },
+      {
+        "x1": 567.04,
+        "y1": 483.12,
+        "x2": 660.48,
+        "y2": 609.12
+      },
+      {
+        "x1": 595.2,
+        "y1": 504.71999999999997,
+        "x2": 738.56,
+        "y2": 650.88
+      },
+      {
+        "x1": 597.76,
+        "y1": 87.84,
+        "x2": 692.48,
+        "y2": 177.84
+      },
+      {
+        "x1": 602.88,
+        "y1": 0.0,
+        "x2": 736.0,
+        "y2": 105.83999999999999
+      },
+      {
+        "x1": 624.64,
+        "y1": 616.3199999999999,
+        "x2": 751.3599999999999,
+        "y2": 720.0
+      },
+      {
+        "x1": 625.92,
+        "y1": 341.28,
+        "x2": 769.28,
+        "y2": 480.96000000000004
+      },
+      {
+        "x1": 669.44,
+        "y1": 69.84,
+        "x2": 806.4,
+        "y2": 213.84
+      }
+    ],
+    "infer_seconds": 0.7729086875915527
+  },
+  "unlabelled/rgbd_1_color_1280x720_20260528_092854/rgbd_1_color_1280x720_20260528_092854_frame_0000450.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><683><799><891><1000></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 874.24,
+        "y1": 575.2800000000001,
+        "x2": 1140.48,
+        "y2": 720.0
+      }
+    ],
+    "infer_seconds": 0.520681619644165
+  },
+  "unlabelled/rgbd_1_color_1280x720_20260528_092854/rgbd_1_color_1280x720_20260528_092854_frame_0000600.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><683><799><891><999></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 874.24,
+        "y1": 575.2800000000001,
+        "x2": 1140.48,
+        "y2": 719.28
+      }
+    ],
+    "infer_seconds": 0.518604040145874
+  },
+  "unlabelled/rgbd_2_color_1280x720_20260528_092854/rgbd_2_color_1280x720_20260528_092854_frame_0000000.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5197257995605469
+  },
+  "unlabelled/rgbd_2_color_1280x720_20260528_092854/rgbd_2_color_1280x720_20260528_092854_frame_0000149.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5189275741577148
+  },
+  "unlabelled/rgbd_2_color_1280x720_20260528_092854/rgbd_2_color_1280x720_20260528_092854_frame_0000298.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box><473><56><562><235></box><|im_end|>",
+    "boxes": [
+      {
+        "x1": 605.4399999999999,
+        "y1": 40.32,
+        "x2": 719.3600000000001,
+        "y2": 169.2
+      }
+    ],
+    "infer_seconds": 0.5199661254882812
+  },
+  "unlabelled/rgbd_2_color_1280x720_20260528_092854/rgbd_2_color_1280x720_20260528_092854_frame_0000447.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.520754337310791
+  },
+  "unlabelled/rgbd_2_color_1280x720_20260528_092854/rgbd_2_color_1280x720_20260528_092854_frame_0000596.jpg": {
+    "raw_answer": "<ref>translucent bubble-wrap polybag, locate each individual bag separately even if touching, overlapping, or piled together \u2014 do not merge multiple bags into a single box</ref><box>None</box><|im_end|>",
+    "boxes": [],
+    "infer_seconds": 0.5193617343902588
+  }
+}

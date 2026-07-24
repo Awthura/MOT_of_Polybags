@@ -31,7 +31,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-PROMPT_CATEGORIES = ["translucent bubble-wrap polybag"]
+DEFAULT_CATEGORY = "translucent bubble-wrap polybag"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SAMPLE_DIR = SCRIPT_DIR / "pilot_sample"
@@ -107,7 +107,10 @@ def main():
     ap.add_argument("--model", default="nvidia/LocateAnything-3B")
     ap.add_argument("--out-dir", default="results")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--category", default=DEFAULT_CATEGORY,
+                     help="Category description passed to worker.detect()")
     args = ap.parse_args()
+    prompt_categories = [args.category]
 
     sys.path.insert(0, str(Path(args.eagle_dir) / "Embodied"))
     from locateanything_worker import LocateAnythingWorker  # noqa: E402
@@ -133,7 +136,7 @@ def main():
         w, h = img.size
 
         t0 = time.time()
-        result = worker.detect(img, PROMPT_CATEGORIES)
+        result = worker.detect(img, prompt_categories)
         dt = time.time() - t0
         pred_boxes = worker.parse_boxes(result["answer"], w, h)
 
@@ -170,7 +173,7 @@ def main():
             w, h = img.size
 
             t0 = time.time()
-            result = worker.detect(img, PROMPT_CATEGORIES)
+            result = worker.detect(img, prompt_categories)
             dt = time.time() - t0
             pred_boxes = worker.parse_boxes(result["answer"], w, h)
 

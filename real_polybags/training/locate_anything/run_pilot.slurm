@@ -31,7 +31,11 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
     source "$VENV/bin/activate"
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Under sbatch (not interactive srun), BASH_SOURCE[0] resolves to a node-local
+# slurm spool path (/var/spool/slurmd/job<id>/slurm_script), not the real
+# script location -- cd'ing there and mkdir'ing fails with permission denied.
+# SLURM_SUBMIT_DIR holds the actual submission directory and is reliable here.
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 cd "$SCRIPT_DIR"
 mkdir -p results logs
 

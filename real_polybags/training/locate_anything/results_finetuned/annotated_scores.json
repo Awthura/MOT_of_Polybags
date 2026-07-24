@@ -1,0 +1,107 @@
+{
+  "rgb_frame1_000060.png": {
+    "n_pred": 1,
+    "n_gt": 9,
+    "precision": 1.0,
+    "recall": 0.1111111111111111,
+    "mean_iou_matched": 0.9070064463027764
+  },
+  "rgb_frame1_000434.png": {
+    "n_pred": 1,
+    "n_gt": 11,
+    "precision": 1.0,
+    "recall": 0.09090909090909091,
+    "mean_iou_matched": 0.9754401432362705
+  },
+  "rgb_frame1_000623.png": {
+    "n_pred": 1,
+    "n_gt": 11,
+    "precision": 1.0,
+    "recall": 0.09090909090909091,
+    "mean_iou_matched": 0.8894773481463593
+  },
+  "rgb_frame1_000679.png": {
+    "n_pred": 1,
+    "n_gt": 12,
+    "precision": 1.0,
+    "recall": 0.08333333333333333,
+    "mean_iou_matched": 0.9422254585401202
+  },
+  "rgb_frame1_001036.png": {
+    "n_pred": 1,
+    "n_gt": 4,
+    "precision": 0.0,
+    "recall": 0.0,
+    "mean_iou_matched": 0.0
+  },
+  "rgb_frame1_001155.png": {
+    "n_pred": 1,
+    "n_gt": 11,
+    "precision": 1.0,
+    "recall": 0.09090909090909091,
+    "mean_iou_matched": 0.8798865022217488
+  },
+  "rgb_frame1_001180.png": {
+    "n_pred": 1,
+    "n_gt": 10,
+    "precision": 1.0,
+    "recall": 0.1,
+    "mean_iou_matched": 0.6683454079588147
+  },
+  "rgb_frame1_001205.png": {
+    "n_pred": 1,
+    "n_gt": 10,
+    "precision": 0.0,
+    "recall": 0.0,
+    "mean_iou_matched": 0.0
+  },
+  "rgb_frame1_002009.png": {
+    "n_pred": 1,
+    "n_gt": 8,
+    "precision": 1.0,
+    "recall": 0.125,
+    "mean_iou_matched": 0.9021031737669284
+  },
+  "rgb_frame_000053.png": {
+    "n_pred": 1,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.058823529411764705,
+    "mean_iou_matched": 0.9887824944761331
+  },
+  "rgb_frame_000109.png": {
+    "n_pred": 1,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.058823529411764705,
+    "mean_iou_matched": 0.991990788835436
+  },
+  "rgb_frame_000165.png": {
+    "n_pred": 1,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.058823529411764705,
+    "mean_iou_matched": 0.9901861249804784
+  },
+  "rgb_frame_000221.png": {
+    "n_pred": 1,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.058823529411764705,
+    "mean_iou_matched": 0.9866260548899458
+  },
+  "rgb_frame_000277.png": {
+    "n_pred": 1,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.058823529411764705,
+    "mean_iou_matched": 0.9550860342656858
+  },
+  "rgb_frame_000555.png": {
+    "n_pred": 1,
+    "n_gt": 11,
+    "precision": 1.0,
+    "recall": 0.09090909090909091,
+    "mean_iou_matched": 0.7665888348790456
+  }
+}
