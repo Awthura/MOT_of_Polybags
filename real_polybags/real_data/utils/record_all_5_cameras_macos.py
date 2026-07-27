@@ -541,13 +541,18 @@ class RGBDWorker(CameraWorker):
     # output — depth detail beyond the sensor's real resolution was interpolated
     # anyway.
     def __init__(self, index, width, height, fps, duration, color_file, depth_file,
-                 depth_width=848, depth_height=480):
+                 depth_width=None, depth_height=None):
         super().__init__(f"RGBD_{index + 1}", width, height, fps, duration, color_file)
         self.index        = index
         self.depth_file   = depth_file
         self.depth_out    = None
-        self.depth_width  = depth_width
-        self.depth_height = depth_height
+        # Default to the colour resolution — i.e. the original behaviour.
+        # Lowering it was tried as a fix for the dual-RealSense failure and the
+        # evidence contradicted it (848x480 run: both cameras failed;
+        # 1280x720 run: one camera recorded 152 frames), so it is NOT the
+        # default. Kept as a tuning knob only.
+        self.depth_width  = depth_width or width
+        self.depth_height = depth_height or height
 
     def _init_depth_writer(self):
         fourcc = cv2.VideoWriter_fourcc(*'MJPG')
@@ -768,7 +773,7 @@ def display_loop(workers, duration, verbose):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 def record_all_cameras(duration_seconds, width, height, fps, verbose,
-                       max_realsense=2, depth_width=848, depth_height=480,
+                       max_realsense=2, depth_width=None, depth_height=None,
                        lucid_packet_size=1400, lucid_packet_delay=40000):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     workers   = []
@@ -908,7 +913,7 @@ def record_all_cameras(duration_seconds, width, height, fps, verbose,
         "target_fps": fps,
         "requested_duration_s": duration_seconds,
         "width": width, "height": height,
-        "depth_stream": [depth_width, depth_height],
+        "depth_stream": [depth_width or width, depth_height or height],
         "cameras": {},
     }
     for w in workers:
@@ -974,14 +979,17 @@ if __name__ == '__main__':
                          "or 0 if one of them is in a bad USB state and crashes the "
                          "process — a libusb SIGSEGV cannot be caught and would "
                          "otherwise take the Basler/Lucid cameras down too.")
-    ap.add_argument('--depth-width', type=int, default=848,
-                    help="Depth STREAM width (default 848, the D435's native depth "
-                         "resolution). Independent of --width: depth is aligned to "
-                         "the colour stream, so the written depth video is always at "
-                         "colour resolution. Lower values free USB bandwidth, which "
-                         "is what lets two D435s share one controller.")
-    ap.add_argument('--depth-height', type=int, default=480,
-                    help="Depth STREAM height (default 480). See --depth-width.")
+    ap.add_argument('--depth-width', type=int, default=None,
+                    help="Depth STREAM width (default: same as --width). Independent "
+                         "of --width because depth is aligned to the colour stream, so "
+                         "the written depth video is at colour resolution regardless. "
+                         "848 is the D435's native depth resolution and cuts USB "
+                         "bandwidth ~15MB/s per camera. NOTE: this did NOT fix the "
+                         "dual-RealSense failure — that is open-time contention, not "
+                         "bandwidth — so it is a tuning knob, not a default.")
+    ap.add_argument('--depth-height', type=int, default=None,
+                    help="Depth STREAM height (default: same as --height). See "
+                         "--depth-width.")
     ap.add_argument('--lucid-packet-size', type=int, default=1400,
                     help="Lucid GigE packet size in bytes (default 1400). Larger "
                          "means fewer packets per frame, so less total inter-packet "

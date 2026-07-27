@@ -35,6 +35,7 @@ here too:
 """
 
 import argparse
+import json
 import cv2
 import numpy as np
 from datetime import datetime
@@ -98,6 +99,7 @@ class CameraWorker:
         self.error        = None
         self.start_time   = None
         self.end_time     = None   # set on capture-loop exit; freezes elapsed()
+        self.frame_times  = []     # wall-clock capture time per written frame
         # Setup and the synchronized start are decoupled: each worker reports
         # setup_done (success or failure) independently, then waits on a shared
         # go_event. This replaces a threading.Barrier(len(workers)), which
@@ -160,6 +162,13 @@ class CameraWorker:
     def _write_frame(self, frame):
         if frame is not None and frame.size > 0:
             self.out.write(frame)
+            # Capture-time timestamp per frame. The AVI header carries a single
+            # fixed fps (the *target*), so a camera running below target yields
+            # a file that plays back too fast — measured on macOS, Lucid wrote
+            # 85 frames of a 10s event, which at a 15fps header replays in 5.7s
+            # (1.76x). Frame index is therefore NOT proportional to time, which
+            # matters for velocity, cross-camera alignment and MOT.
+            self.frame_times.append(time.time())
             self.frame_count += 1
             with self.lock:
                 self.latest_frame = frame.copy()
@@ -212,8 +221,16 @@ class RGBDWorker(CameraWorker):
     """
 
     def __init__(self, name, index, backend, width, height, fps,
-                 duration, color_file, depth_file=None):
+                 duration, color_file, depth_file=None,
+                 depth_width=None, depth_height=None):
         super().__init__(name, width, height, fps, duration, color_file)
+        # Depth stream resolution, independent of colour: _run_realsense aligns
+        # depth to the colour stream, so the written depth video is at colour
+        # resolution regardless of what the sensor streamed. Defaults to the
+        # colour resolution (original behaviour); 848x480 is the D435's native
+        # depth resolution and cuts USB bandwidth if that is ever the issue.
+        self.depth_width  = depth_width or width
+        self.depth_height = depth_height or height
         self.index        = index        # device index (for 'realsense' / 'opencv')
         self.backend      = backend      # 'realsense' | 'kinect' | 'opencv'
         self.depth_file   = depth_file
@@ -282,7 +299,7 @@ class RGBDWorker(CameraWorker):
 
         cfg.enable_stream(rs.stream.color, self.width, self.height,
                           rs.format.bgr8, self.fps)
-        cfg.enable_stream(rs.stream.depth, self.width, self.height,
+        cfg.enable_stream(rs.stream.depth, self.depth_width, self.depth_height,
                           rs.format.z16,  self.fps)
 
         align    = rs.align(rs.stream.color)
@@ -567,10 +584,13 @@ class BaslerWorker(CameraWorker):
 # LucidWorker — ctypes zero-copy capture, BGR8, manual exposure
 # ─────────────────────────────────────────────────────────────────────────────
 class LucidWorker(CameraWorker):
-    def __init__(self, arena_system, device, width, height, fps, duration, output_file):
+    def __init__(self, arena_system, device, width, height, fps, duration, output_file,
+                 packet_size=1400, packet_delay=60000):
         super().__init__("Lucid", width, height, fps, duration, output_file)
         self.arena_system  = arena_system
         self.device        = device
+        self.packet_size   = packet_size
+        self.packet_delay  = packet_delay
         self._nodemap      = None
         self._exp_min      = 10.0
         self._exp_max      = 1_000_000.0
@@ -648,19 +668,57 @@ class LucidWorker(CameraWorker):
                 print(f"[{self.name}] FPS: {self.fps}")
             except: pass
 
-            # ── Stream tuning — increased delay for 5-camera setup ────────
-            # With 5 cameras on shared GigE we need even more conservative
-            # inter-packet spacing. 60 µs keeps Lucid within ~220 Mbps budget.
+            # ── Stream tuning — the dominant control on Lucid's frame rate ──
+            #
+            # Inter-packet delay exists to stop 5 GigE cameras bursting into a
+            # shared switch and dropping frames, so it can't simply be zeroed.
+            # But it is expensive, and the cost is easy to underestimate:
+            #
+            #   1280x720 BGR8 = 2,764,800 B / 1400 B per packet = ~1975 packets
+            #   1975 packets x 60us = 118.5 ms/frame  =>  8.4 fps ceiling
+            #
+            # That ceiling applies before any transmission or processing time,
+            # and it is BELOW a 15 fps target. Measured on macOS, Lucid captured
+            # exactly 85 frames in 10s (8.5 fps) on four consecutive runs —
+            # matching the 60us prediction to within 1%. Note these values are
+            # stored non-volatile on the camera, so a value written here persists
+            # into later sessions on other machines.
+            #
+            # Basler is given 8us in this same script while Lucid gets 60us — a
+            # 7.5x asymmetry that is worth revisiting against measured rates
+            # rather than assumed bandwidth budgets.
             try:
-                nodemap['GevSCPSPacketSize'].value = 1400
-                print(f"[{self.name}] GevSCPSPacketSize = 1400")
+                nodemap['GevSCPSPacketSize'].value = self.packet_size
+                print(f"[{self.name}] GevSCPSPacketSize = {self.packet_size}")
             except Exception as e:
                 print(f"[{self.name}] GevSCPSPacketSize skipped: {e}")
             try:
-                nodemap['GevSCPD'].value = 60000   # 60 µs for 5-cam headroom
-                print(f"[{self.name}] GevSCPD = 60000 ns (60 µs)")
+                nodemap['GevSCPD'].value = self.packet_delay
+                print(f"[{self.name}] GevSCPD = {self.packet_delay}")
             except Exception as e:
                 print(f"[{self.name}] GevSCPD skipped: {e}")
+
+            # Read back what the camera actually accepted and report the
+            # implied ceiling — a silently-rejected write is otherwise
+            # indistinguishable from success, which is exactly how the macOS
+            # side spent a session at 8.5 fps without knowing why.
+            try:
+                ps = nodemap['GevSCPSPacketSize'].value
+                pd = nodemap['GevSCPD'].value
+                payload = self.width * self.height * 3
+                pkts = -(-payload // ps) if ps else 0
+                delay_s = pkts * (pd / 1e9) if pd else 0.0
+                ceiling = (1.0 / delay_s) if delay_s > 0 else float('inf')
+                print(f"[{self.name}] GigE readback: packet_size={ps} delay={pd} "
+                      f"(~{pkts} packets/frame)")
+                print(f"[{self.name}] delay-implied fps ceiling: {ceiling:.1f} "
+                      f"(target {self.fps})")
+                if ceiling < self.fps:
+                    print(f"[{self.name}] WARNING: packet delay alone caps this "
+                          f"below target — lower --lucid-packet-delay or raise "
+                          f"--lucid-packet-size")
+            except Exception as e:
+                print(f"[{self.name}] could not read back GigE settings: {e}")
             try:
                 tl = device.tl_stream_nodemap
                 tl['StreamBufferHandlingMode'].value = 'OldestFirst'
@@ -916,7 +974,8 @@ def _find_rgbd_backends(max_rgbd=2):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
-                       max_rgbd=2):
+                       max_rgbd=2, lucid_packet_size=1400, lucid_packet_delay=60000,
+                       depth_width=None, depth_height=None):
     """
     Records simultaneously from:
       • Up to 2 RGBD cameras  (RealSense / Azure Kinect / OpenCV fallback)
@@ -952,6 +1011,8 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
             duration  = duration_seconds,
             color_file= color_file,
             depth_file= depth_file,
+            depth_width  = depth_width,
+            depth_height = depth_height,
         )
         workers.append(w)
         print(f"[{name}] Prepared: {dev['label']} → {color_file}"
@@ -985,7 +1046,9 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
             workers.append(LucidWorker(
                 arena_system, lucid_device,
                 width, height, fps, duration_seconds,
-                f"lucid_{width}x{height}_{timestamp}.avi"
+                f"lucid_{width}x{height}_{timestamp}.avi",
+                packet_size=lucid_packet_size,
+                packet_delay=lucid_packet_delay,
             ))
         else:
             print("[Lucid] WARNING: no Lucid device matched — skipping")
@@ -1063,16 +1126,70 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
     for w in workers:
         w.join()
 
+    # ── Timing metadata ───────────────────────────────────────────────────────
+    # The .avi files alone are not a faithful time record: the container stores
+    # one fixed fps (the target), so a camera that ran below target plays back
+    # too fast and its frame indices don't map linearly to real time. Anything
+    # temporal downstream should use these files, not the video's timebase.
+    meta = {
+        "timestamp": timestamp,
+        "target_fps": fps,
+        "requested_duration_s": duration_seconds,
+        "width": width, "height": height,
+        "platform": "windows",
+        "cameras": {},
+    }
+    for w in workers:
+        ts = w.frame_times
+        drift = None
+        if len(ts) > 1:
+            span = ts[-1] - ts[0]
+            ideal = span / (len(ts) - 1)
+            drift = max(abs((ts[i] - ts[0]) - i * ideal) for i in range(len(ts)))
+        meta["cameras"][w.name] = {
+            "color_file": w.output_file,
+            "depth_file": getattr(w, "depth_file", None),
+            "frames": w.frame_count,
+            "incomplete": w.incomplete,
+            "actual_fps": round(w.actual_fps(), 3),
+            "recorded_s": round(w.elapsed(), 3),
+            "start_unix": w.start_time,
+            "end_unix": w.end_time,
+            "playback_speed_error": (round(w.actual_fps() / fps, 3) if fps else None),
+            "max_pacing_drift_s": (round(drift, 4) if drift is not None else None),
+            "error": w.error,
+        }
+        if ts:
+            ts_file = f"timestamps_{w.name}_{timestamp}.csv"
+            with open(ts_file, "w") as f:
+                f.write("frame_index,unix_time,seconds_from_start\n")
+                for i, t in enumerate(ts):
+                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f}\n")
+            meta["cameras"][w.name]["timestamps_file"] = ts_file
+
+    meta_file = f"recording_metadata_{timestamp}.json"
+    with open(meta_file, "w") as f:
+        json.dump(meta, f, indent=2)
+
     print(f"\n{'='*60}")
     print("All recordings complete!")
     for w in workers:
         extra = ""
         if isinstance(w, RGBDWorker) and w.depth_file:
             extra = f"  depth→ {w.depth_file}"
+        speed = w.actual_fps() / fps if fps else 1.0
+        # Flag files whose playback speed is materially wrong, so a camera
+        # silently running slow doesn't quietly corrupt downstream timing.
+        warn = "" if 0.95 <= speed <= 1.05 else f"  <- PLAYS {1/speed:.2f}x TOO FAST"
         print(f"  {w.name:12} | {w.frame_count:5} frames | "
               f"{w.actual_fps():.1f} fps | {w.incomplete} incomplete | "
-              f"{w.output_file}{extra}")
+              f"{w.output_file}{extra}{warn}")
     print(f"{'='*60}")
+    print(f"Timing metadata → {meta_file}")
+    print("Use the timestamps_*.csv files for any temporal analysis; the .avi "
+          "timebase is the target fps, not the real one.")
+    print("fix_video_timing.py --metadata "
+          f"{meta_file}   # remux to true playback speed")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1088,6 +1205,26 @@ if __name__ == '__main__':
                     help="How many RGBD (RealSense/Kinect) cameras to use, default 2. "
                          "Set to 1 or 0 to exclude a camera that is being removed from "
                          "the rig or is in a bad USB state.")
+    ap.add_argument('--depth-width', type=int, default=None,
+                    help="Depth STREAM width (default: same as --width). Independent "
+                         "of --width because depth is aligned to the colour stream, so "
+                         "the written depth video is at colour resolution regardless. "
+                         "848 is the D435's native depth resolution and cuts USB "
+                         "bandwidth if that is ever the constraint.")
+    ap.add_argument('--depth-height', type=int, default=None,
+                    help="Depth STREAM height (default: same as --height).")
+    ap.add_argument('--lucid-packet-size', type=int, default=1400,
+                    help="Lucid GevSCPSPacketSize in bytes (default 1400). Larger means "
+                         "fewer packets per frame, so less total inter-packet delay. "
+                         "Requires a matching network MTU (jumbo frames on NIC AND "
+                         "switch for values much above 1500).")
+    ap.add_argument('--lucid-packet-delay', type=int, default=60000,
+                    help="Lucid GevSCPD inter-packet delay (default 60000 = 60us). The "
+                         "dominant limit on Lucid's frame rate: ~1975 packets/frame x "
+                         "60us = 118ms, an 8.4 fps ceiling that is BELOW a 15 fps "
+                         "target and matches the 8.5 fps measured on macOS. Lower it "
+                         "while watching the 'incomplete' count for dropped packets. "
+                         "NOTE: this value is stored non-volatile on the camera.")
     args = ap.parse_args()
 
     record_all_cameras(
@@ -1096,4 +1233,8 @@ if __name__ == '__main__':
         height=args.height,
         fps=args.fps,
         max_rgbd=args.max_rgbd,
+        lucid_packet_size=args.lucid_packet_size,
+        lucid_packet_delay=args.lucid_packet_delay,
+        depth_width=args.depth_width,
+        depth_height=args.depth_height,
     )

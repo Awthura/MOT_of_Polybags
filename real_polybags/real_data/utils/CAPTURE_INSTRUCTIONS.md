@@ -38,6 +38,11 @@ python record_basler_lucid_rgbd.py --fps 15 --duration 90
 python record_basler_lucid_rgbd.py --fps 15 --duration 90 --max-rgbd 1
 ```
 
+Feature parity with the macOS script as of 2026-07-27: resilient sync,
+frozen fps clock, per-frame timestamps + `recording_metadata_*.json`,
+playback-speed warnings, and `--lucid-packet-size`/`--lucid-packet-delay`/
+`--depth-width`/`--depth-height` tuning.
+
 No `sudo`/admin needed — the macOS RealSense USB permission problem
 (see Known Issues 1) is macOS-specific.
 
@@ -221,6 +226,63 @@ broken" verdicts on healthy hardware:
 **Prevention**: `Ctrl+C` once and let the `finally` blocks release the
 pipelines. Never `Ctrl+Z` — suspending holds the cameras claimed, which is what
 produces "No device connected" on the next run.
+
+### 3. Recorded .avi playback speed is wrong for any camera below target fps
+
+Both recorders create their VideoWriter with the **target** fps, because the
+real rate isn't known until the run ends. A camera that can't sustain the
+target therefore writes a file that plays back too fast. Measured 2026-07-27
+on a 10s run at a 15 fps target:
+
+| camera | frames | plays for | appears |
+|---|---|---|---|
+| Lucid | 85 | 5.7s | **1.76x too fast** |
+| Basler_1 | 129 | 8.6s | 1.16x too fast |
+| Basler_2 | 150 | 10.0s | correct |
+| RGBD | 152 | 10.1s | correct |
+
+This is why Lucid looks like it "records faster" than the RGBD cameras when it
+is in fact the slowest on the rig. Frame *content* is unaffected — but frame
+index is not proportional to time, which breaks velocity, cross-camera
+alignment and MOT.
+
+Both scripts now write `timestamps_<camera>_<run>.csv` (real per-frame capture
+times) and `recording_metadata_<run>.json` (measured fps, playback speed error,
+pacing drift). **Use those for any temporal analysis, not the video timebase.**
+The end-of-run summary flags any camera off by more than 5%.
+
+To correct existing files (lossless container remux, keeps `.orig.avi`):
+
+```bash
+python3 fix_video_timing.py --metadata recording_metadata_<run>.json
+python3 fix_video_timing.py --duration 10 --dry-run *.avi   # older recordings
+```
+
+### 4. Lucid frame rate is capped by GigE inter-packet delay
+
+Lucid captured exactly 85 frames in 10s (8.5 fps) on four consecutive runs — a
+hard configuration ceiling, not jitter. The arithmetic:
+
+```
+1280x720 BGR8 = 2,764,800 B / 1400 B per packet  = ~1975 packets/frame
+1975 packets x 60us inter-packet delay           = 118.5 ms/frame
+                                                 => 8.4 fps ceiling
+```
+
+That matches the measured 8.5 fps to within 1%, and it applies *before* any
+transmission or processing time. The Windows script sets `GevSCPD = 60000`,
+and these values are stored **non-volatile on the camera**, so they persist
+across machines and sessions — which is likely why macOS saw 8.5 fps despite
+requesting 40us (its `gv_set_packet_delay` sat behind a bare `except: pass`,
+so a silent rejection was invisible).
+
+Note the asymmetry: Basler is given 8us in the same script, Lucid 60us.
+
+Both scripts now read back the negotiated values at startup and print the
+delay-implied fps ceiling, warning when it caps below target. Tune with
+`--lucid-packet-delay` / `--lucid-packet-size` while watching the `incomplete`
+count — that counts dropped/incomplete frames, which is what the delay exists
+to prevent. **Not yet verified against hardware.**
 
 ## Network requirement
 
