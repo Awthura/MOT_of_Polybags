@@ -1,3 +1,41 @@
+"""
+Synchronized multi-camera recorder for WINDOWS: 2x Basler (pypylon) +
+1x Lucid (Arena SDK) + up to 2x RGBD (RealSense, with Azure Kinect and generic
+OpenCV fallbacks).
+
+This is the Windows counterpart to `record_all_5_cameras_macos.py`. The two
+differ only in how Lucid is driven: Arena SDK (`arena_api`) here, Aravis on
+macOS, because Arena SDK has no macOS build. Windows also needs no `sudo` for
+RealSense, unlike macOS.
+
+Usage:
+    python record_basler_lucid_rgbd.py --fps 15 --duration 90
+    python record_basler_lucid_rgbd.py --max-rgbd 1     # exclude one RGBD unit
+
+Synchronization: each camera connects independently and reports `setup_done`
+(success or failure), then waits on a shared `go_event` that the coordinator
+sets once the setup phase concludes. Cameras that fail to connect are dropped
+and the rest still record.
+
+This replaced a `threading.Barrier(len(workers))`, which required every worker
+to arrive — so one camera failing to connect raised BrokenBarrierError for all
+the others and lost the entire recording. With flaky RealSense units on a
+shared USB controller that happened routinely.
+
+Two failure modes worth knowing about, both found on the macOS side and fixed
+here too:
+  - A worker's go-wait timeout must stay LARGER than the coordinator's setup
+    budget. When both were 35s, workers (whose countdown starts earlier, at
+    their own ready moment) expired first and exited having recorded nothing —
+    producing a run that announced "4/5 cameras ready" and then wrote five
+    header-only AVI files.
+  - `elapsed()` must freeze when capture stops, or the end-of-run summary
+    under-reports fps: the clock keeps running through teardown while
+    frame_count stays fixed.
+"""
+
+import argparse
+import json
 import cv2
 import numpy as np
 from datetime import datetime
@@ -60,10 +98,46 @@ class CameraWorker:
         self.lock         = threading.Lock()
         self.error        = None
         self.start_time   = None
-        self.barrier      = None
+        self.end_time     = None   # set on capture-loop exit; freezes elapsed()
+        self.frame_times  = []     # wall-clock capture time per written frame
+        # Setup and the synchronized start are decoupled: each worker reports
+        # setup_done (success or failure) independently, then waits on a shared
+        # go_event. This replaces a threading.Barrier(len(workers)), which
+        # required EVERY worker to arrive — so a single camera that failed to
+        # connect raised BrokenBarrierError for all the others and took the
+        # whole recording down. That is not hypothetical: the RealSense units
+        # in this rig fail to connect regularly.
+        self.setup_done   = threading.Event()
+        self.setup_ok     = False
+        self.go_event     = None
+        # Safety net only; the coordinator is expected to always signal.
+        # MUST stay larger than the coordinator's total setup budget — a worker
+        # whose go-wait expires before the coordinator has decided exits having
+        # recorded nothing despite having connected fine. See set_go_event().
+        self.go_timeout   = 300.0
 
-    def set_barrier(self, barrier):
-        self.barrier = barrier
+    def set_go_event(self, go_event, go_timeout=None):
+        self.go_event = go_event
+        if go_timeout is not None:
+            self.go_timeout = go_timeout
+
+    def mark_ready(self, ok):
+        if not self.setup_done.is_set():
+            self.setup_ok = ok
+            self.setup_done.set()
+
+    def wait_for_go(self, timeout=None):
+        """Call after setup succeeds. Returns False if the go signal never
+        arrives (e.g. another camera's setup took too long)."""
+        self.mark_ready(True)
+        if self.go_event is None:
+            return True
+        return self.go_event.wait(
+            timeout=self.go_timeout if timeout is None else timeout)
+
+    def mark_finished(self):
+        if self.end_time is None:
+            self.end_time = time.time()
 
     def start(self):
         self.running = True
@@ -88,6 +162,13 @@ class CameraWorker:
     def _write_frame(self, frame):
         if frame is not None and frame.size > 0:
             self.out.write(frame)
+            # Capture-time timestamp per frame. The AVI header carries a single
+            # fixed fps (the *target*), so a camera running below target yields
+            # a file that plays back too fast — measured on macOS, Lucid wrote
+            # 85 frames of a 10s event, which at a 15fps header replays in 5.7s
+            # (1.76x). Frame index is therefore NOT proportional to time, which
+            # matters for velocity, cross-camera alignment and MOT.
+            self.frame_times.append(time.time())
             self.frame_count += 1
             with self.lock:
                 self.latest_frame = frame.copy()
@@ -97,7 +178,21 @@ class CameraWorker:
             return self.latest_frame.copy() if self.latest_frame is not None else None
 
     def elapsed(self):
-        return time.time() - self.start_time if self.start_time else 0
+        """Seconds spent recording. Freezes once the worker stops.
+
+        Using a live time.time() here meant the clock kept running after the
+        capture loop exited while frame_count stayed fixed, and the summary
+        prints after teardown and thread joins — so every camera's fps was
+        reported meaningfully lower there than it actually was (a camera that
+        hit 14.9 fps was summarised as 12.6).
+        """
+        if not self.start_time:
+            return 0
+        end = self.end_time if self.end_time else time.time()
+        return end - self.start_time
+
+    def actual_fps(self):
+        return self.frame_count / max(self.elapsed(), 0.001)
 
     def release(self):
         if self.out:
@@ -126,8 +221,16 @@ class RGBDWorker(CameraWorker):
     """
 
     def __init__(self, name, index, backend, width, height, fps,
-                 duration, color_file, depth_file=None):
+                 duration, color_file, depth_file=None,
+                 depth_width=None, depth_height=None):
         super().__init__(name, width, height, fps, duration, color_file)
+        # Depth stream resolution, independent of colour: _run_realsense aligns
+        # depth to the colour stream, so the written depth video is at colour
+        # resolution regardless of what the sensor streamed. Defaults to the
+        # colour resolution (original behaviour); 848x480 is the D435's native
+        # depth resolution and cuts USB bandwidth if that is ever the issue.
+        self.depth_width  = depth_width or width
+        self.depth_height = depth_height or height
         self.index        = index        # device index (for 'realsense' / 'opencv')
         self.backend      = backend      # 'realsense' | 'kinect' | 'opencv'
         self.depth_file   = depth_file
@@ -172,9 +275,11 @@ class RGBDWorker(CameraWorker):
                 self._run_opencv()
         except Exception as e:
             self.error = str(e)
+            self.mark_ready(False)
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             self.release()
             print(f"[{self.name}] Done | Frames: {self.frame_count} | "
                   f"Incomplete: {self.incomplete}")
@@ -194,7 +299,7 @@ class RGBDWorker(CameraWorker):
 
         cfg.enable_stream(rs.stream.color, self.width, self.height,
                           rs.format.bgr8, self.fps)
-        cfg.enable_stream(rs.stream.depth, self.width, self.height,
+        cfg.enable_stream(rs.stream.depth, self.depth_width, self.depth_height,
                           rs.format.z16,  self.fps)
 
         align    = rs.align(rs.stream.color)
@@ -210,8 +315,9 @@ class RGBDWorker(CameraWorker):
         self._init_depth_writer()
         print(f"[{self.name}] Ready — waiting for sync...")
 
-        if self.barrier:
-            self.barrier.wait(timeout=30)
+        if not self.wait_for_go():
+            print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+            return
 
         self.start_time = time.time()
         print(f"[{self.name}] Recording → {self.output_file}")
@@ -259,8 +365,9 @@ class RGBDWorker(CameraWorker):
         self._init_depth_writer()
         print(f"[{self.name}] Ready — waiting for sync...")
 
-        if self.barrier:
-            self.barrier.wait(timeout=30)
+        if not self.wait_for_go():
+            print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+            return
 
         self.start_time = time.time()
         print(f"[{self.name}] Recording → {self.output_file}")
@@ -305,8 +412,9 @@ class RGBDWorker(CameraWorker):
         self._init_writer()
         print(f"[{self.name}] OpenCV VideoCapture({self.index}) ready — waiting for sync...")
 
-        if self.barrier:
-            self.barrier.wait(timeout=30)
+        if not self.wait_for_go():
+            print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+            return
 
         self.start_time = time.time()
         print(f"[{self.name}] Recording → {self.output_file}")
@@ -414,11 +522,12 @@ class BaslerWorker(CameraWorker):
             self._init_writer()
             print(f"[{self.name}] Ready — waiting for sync...")
 
-            # ── Barrier ──────────────────────────────────────────────────
-            if self.barrier:
-                self.barrier.wait(timeout=30)
+            # ── Wait for the shared go signal ────────────────────────────
+            if not self.wait_for_go():
+                print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+                return
 
-            # ── Start AFTER barrier ───────────────────────────────────────
+            # ── Start AFTER the go signal ────────────────────────────────
             self.start_time = time.time()
             camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
             print(f"[{self.name}] Recording → {self.output_file}")
@@ -458,9 +567,11 @@ class BaslerWorker(CameraWorker):
 
         except Exception as e:
             self.error = str(e)
+            self.mark_ready(False)
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             if camera and camera.IsOpen():
                 camera.StopGrabbing()
                 camera.Close()
@@ -473,10 +584,13 @@ class BaslerWorker(CameraWorker):
 # LucidWorker — ctypes zero-copy capture, BGR8, manual exposure
 # ─────────────────────────────────────────────────────────────────────────────
 class LucidWorker(CameraWorker):
-    def __init__(self, arena_system, device, width, height, fps, duration, output_file):
+    def __init__(self, arena_system, device, width, height, fps, duration, output_file,
+                 packet_size=1400, packet_delay=60000):
         super().__init__("Lucid", width, height, fps, duration, output_file)
         self.arena_system  = arena_system
         self.device        = device
+        self.packet_size   = packet_size
+        self.packet_delay  = packet_delay
         self._nodemap      = None
         self._exp_min      = 10.0
         self._exp_max      = 1_000_000.0
@@ -554,19 +668,57 @@ class LucidWorker(CameraWorker):
                 print(f"[{self.name}] FPS: {self.fps}")
             except: pass
 
-            # ── Stream tuning — increased delay for 5-camera setup ────────
-            # With 5 cameras on shared GigE we need even more conservative
-            # inter-packet spacing. 60 µs keeps Lucid within ~220 Mbps budget.
+            # ── Stream tuning — the dominant control on Lucid's frame rate ──
+            #
+            # Inter-packet delay exists to stop 5 GigE cameras bursting into a
+            # shared switch and dropping frames, so it can't simply be zeroed.
+            # But it is expensive, and the cost is easy to underestimate:
+            #
+            #   1280x720 BGR8 = 2,764,800 B / 1400 B per packet = ~1975 packets
+            #   1975 packets x 60us = 118.5 ms/frame  =>  8.4 fps ceiling
+            #
+            # That ceiling applies before any transmission or processing time,
+            # and it is BELOW a 15 fps target. Measured on macOS, Lucid captured
+            # exactly 85 frames in 10s (8.5 fps) on four consecutive runs —
+            # matching the 60us prediction to within 1%. Note these values are
+            # stored non-volatile on the camera, so a value written here persists
+            # into later sessions on other machines.
+            #
+            # Basler is given 8us in this same script while Lucid gets 60us — a
+            # 7.5x asymmetry that is worth revisiting against measured rates
+            # rather than assumed bandwidth budgets.
             try:
-                nodemap['GevSCPSPacketSize'].value = 1400
-                print(f"[{self.name}] GevSCPSPacketSize = 1400")
+                nodemap['GevSCPSPacketSize'].value = self.packet_size
+                print(f"[{self.name}] GevSCPSPacketSize = {self.packet_size}")
             except Exception as e:
                 print(f"[{self.name}] GevSCPSPacketSize skipped: {e}")
             try:
-                nodemap['GevSCPD'].value = 60000   # 60 µs for 5-cam headroom
-                print(f"[{self.name}] GevSCPD = 60000 ns (60 µs)")
+                nodemap['GevSCPD'].value = self.packet_delay
+                print(f"[{self.name}] GevSCPD = {self.packet_delay}")
             except Exception as e:
                 print(f"[{self.name}] GevSCPD skipped: {e}")
+
+            # Read back what the camera actually accepted and report the
+            # implied ceiling — a silently-rejected write is otherwise
+            # indistinguishable from success, which is exactly how the macOS
+            # side spent a session at 8.5 fps without knowing why.
+            try:
+                ps = nodemap['GevSCPSPacketSize'].value
+                pd = nodemap['GevSCPD'].value
+                payload = self.width * self.height * 3
+                pkts = -(-payload // ps) if ps else 0
+                delay_s = pkts * (pd / 1e9) if pd else 0.0
+                ceiling = (1.0 / delay_s) if delay_s > 0 else float('inf')
+                print(f"[{self.name}] GigE readback: packet_size={ps} delay={pd} "
+                      f"(~{pkts} packets/frame)")
+                print(f"[{self.name}] delay-implied fps ceiling: {ceiling:.1f} "
+                      f"(target {self.fps})")
+                if ceiling < self.fps:
+                    print(f"[{self.name}] WARNING: packet delay alone caps this "
+                          f"below target — lower --lucid-packet-delay or raise "
+                          f"--lucid-packet-size")
+            except Exception as e:
+                print(f"[{self.name}] could not read back GigE settings: {e}")
             try:
                 tl = device.tl_stream_nodemap
                 tl['StreamBufferHandlingMode'].value = 'OldestFirst'
@@ -581,8 +733,9 @@ class LucidWorker(CameraWorker):
 
             self._init_writer()
 
-            if self.barrier:
-                self.barrier.wait(timeout=30)
+            if not self.wait_for_go():
+                print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+                return
 
             # Drain stale pre-barrier frames
             drain_until = time.time() + 0.5
@@ -637,9 +790,11 @@ class LucidWorker(CameraWorker):
 
         except Exception as e:
             self.error = str(e)
+            self.mark_ready(False)
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             try:
                 device.stop_stream()
                 self.arena_system.destroy_device(device)
@@ -758,14 +913,14 @@ def display_loop(workers, duration):
 # ─────────────────────────────────────────────────────────────────────────────
 # RGBD device discovery helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def _find_rgbd_backends():
+def _find_rgbd_backends(max_rgbd=2):
     """
     Returns a list of dicts:
       {'backend': 'realsense'|'kinect'|'opencv', 'index': int, 'label': str}
-    up to MAX_RGBD devices.
+    up to max_rgbd devices.
     Priority: RealSense > Kinect > OpenCV.
     """
-    MAX_RGBD = 2
+    MAX_RGBD = max_rgbd
     found    = []
 
     # 1. Intel RealSense
@@ -818,7 +973,9 @@ def _find_rgbd_backends():
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
-def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
+def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
+                       max_rgbd=2, lucid_packet_size=1400, lucid_packet_delay=60000,
+                       depth_width=None, depth_height=None):
     """
     Records simultaneously from:
       • Up to 2 RGBD cameras  (RealSense / Azure Kinect / OpenCV fallback)
@@ -836,7 +993,7 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
 
     # ── 1. RGBD cameras ──────────────────────────────────────────────────────
     print("\n=== Enumerating RGBD cameras ===")
-    rgbd_devs = _find_rgbd_backends()
+    rgbd_devs = _find_rgbd_backends(max_rgbd=max_rgbd)
     print(f"Found {len(rgbd_devs)} RGBD device(s)")
 
     for i, dev in enumerate(rgbd_devs, start=1):
@@ -854,6 +1011,8 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
             duration  = duration_seconds,
             color_file= color_file,
             depth_file= depth_file,
+            depth_width  = depth_width,
+            depth_height = depth_height,
         )
         workers.append(w)
         print(f"[{name}] Prepared: {dev['label']} → {color_file}"
@@ -887,7 +1046,9 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
             workers.append(LucidWorker(
                 arena_system, lucid_device,
                 width, height, fps, duration_seconds,
-                f"lucid_{width}x{height}_{timestamp}.avi"
+                f"lucid_{width}x{height}_{timestamp}.avi",
+                packet_size=lucid_packet_size,
+                packet_delay=lucid_packet_delay,
             ))
         else:
             print("[Lucid] WARNING: no Lucid device matched — skipping")
@@ -915,44 +1076,165 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
         print("ERROR: No cameras found!")
         return
 
-    # ── Barrier ───────────────────────────────────────────────────────────────
-    barrier = threading.Barrier(len(workers))
+    # ── Synchronized start ────────────────────────────────────────────────────
+    # One wall-clock budget for the whole setup phase, shared across cameras.
+    # Workers get a go-wait timeout derived from it so they cannot expire before
+    # this thread has decided whether to start — if they do, a camera that
+    # connected perfectly still records zero frames.
+    SETUP_BUDGET = 45.0
+
+    go_event = threading.Event()
     for w in workers:
-        w.set_barrier(barrier)
+        w.set_go_event(go_event, go_timeout=SETUP_BUDGET + 60.0)
 
     print(f"\nAll {len(workers)} cameras pre-initialized.")
-    print(f"Starting simultaneous recording for {duration_seconds}s...\n")
+    print(f"Connecting, then recording for {duration_seconds}s...\n")
 
     for w in workers:
         w.running = True
         w.thread  = threading.Thread(target=w._run, daemon=True)
         w.thread.start()
 
-    display_loop(workers, duration_seconds)
+    print(f"Waiting for all cameras to finish setup "
+          f"({SETUP_BUDGET:.0f}s total budget)...")
+    setup_deadline = time.time() + SETUP_BUDGET
+    for w in workers:
+        remaining = max(0.0, setup_deadline - time.time())
+        if not w.setup_done.wait(timeout=remaining):
+            print(f"[{w.name}] setup did not report back in time — treating as failed")
+            w.mark_ready(False)
+
+    ready_workers  = [w for w in workers if w.setup_ok]
+    failed_workers = [w for w in workers if not w.setup_ok]
+
+    if failed_workers:
+        print(f"\nWARNING: {len(failed_workers)} camera(s) failed setup and will be "
+              f"skipped: {[w.name for w in failed_workers]}")
+    if not ready_workers:
+        print("ERROR: no cameras successfully initialized — aborting")
+        go_event.set()  # unblock any worker still parked in wait_for_go()
+        return
+
+    print(f"{len(ready_workers)}/{len(workers)} camera(s) ready — "
+          f"starting synchronized recording for {duration_seconds}s...\n")
+    go_event.set()
+
+    display_loop(ready_workers, duration_seconds)
 
     for w in workers:
         w.stop()
     for w in workers:
         w.join()
 
+    # ── Timing metadata ───────────────────────────────────────────────────────
+    # The .avi files alone are not a faithful time record: the container stores
+    # one fixed fps (the target), so a camera that ran below target plays back
+    # too fast and its frame indices don't map linearly to real time. Anything
+    # temporal downstream should use these files, not the video's timebase.
+    meta = {
+        "timestamp": timestamp,
+        "target_fps": fps,
+        "requested_duration_s": duration_seconds,
+        "width": width, "height": height,
+        "platform": "windows",
+        "cameras": {},
+    }
+    for w in workers:
+        ts = w.frame_times
+        drift = None
+        if len(ts) > 1:
+            span = ts[-1] - ts[0]
+            ideal = span / (len(ts) - 1)
+            drift = max(abs((ts[i] - ts[0]) - i * ideal) for i in range(len(ts)))
+        meta["cameras"][w.name] = {
+            "color_file": w.output_file,
+            "depth_file": getattr(w, "depth_file", None),
+            "frames": w.frame_count,
+            "incomplete": w.incomplete,
+            "actual_fps": round(w.actual_fps(), 3),
+            "recorded_s": round(w.elapsed(), 3),
+            "start_unix": w.start_time,
+            "end_unix": w.end_time,
+            "playback_speed_error": (round(w.actual_fps() / fps, 3) if fps else None),
+            "max_pacing_drift_s": (round(drift, 4) if drift is not None else None),
+            "error": w.error,
+        }
+        if ts:
+            ts_file = f"timestamps_{w.name}_{timestamp}.csv"
+            with open(ts_file, "w") as f:
+                f.write("frame_index,unix_time,seconds_from_start\n")
+                for i, t in enumerate(ts):
+                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f}\n")
+            meta["cameras"][w.name]["timestamps_file"] = ts_file
+
+    meta_file = f"recording_metadata_{timestamp}.json"
+    with open(meta_file, "w") as f:
+        json.dump(meta, f, indent=2)
+
     print(f"\n{'='*60}")
     print("All recordings complete!")
     for w in workers:
-        fps_actual = w.frame_count / max(w.elapsed(), 0.001)
         extra = ""
         if isinstance(w, RGBDWorker) and w.depth_file:
             extra = f"  depth→ {w.depth_file}"
+        speed = w.actual_fps() / fps if fps else 1.0
+        # Flag files whose playback speed is materially wrong, so a camera
+        # silently running slow doesn't quietly corrupt downstream timing.
+        warn = "" if 0.95 <= speed <= 1.05 else f"  <- PLAYS {1/speed:.2f}x TOO FAST"
         print(f"  {w.name:12} | {w.frame_count:5} frames | "
-              f"{fps_actual:.1f} fps | {w.incomplete} incomplete | "
-              f"{w.output_file}{extra}")
+              f"{w.actual_fps():.1f} fps | {w.incomplete} incomplete | "
+              f"{w.output_file}{extra}{warn}")
     print(f"{'='*60}")
+    print(f"Timing metadata → {meta_file}")
+    print("Use the timestamps_*.csv files for any temporal analysis; the .avi "
+          "timebase is the target fps, not the real one.")
+    print("fix_video_timing.py --metadata "
+          f"{meta_file}   # remux to true playback speed")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    ap = argparse.ArgumentParser(
+        description="Synchronized multi-camera recorder for Windows "
+                    "(Basler via pypylon + Lucid via Arena SDK + RGBD)")
+    ap.add_argument('--fps', type=float, default=15.0, help="Target FPS for ALL cameras")
+    ap.add_argument('--duration', type=int, default=90, help="Recording duration in seconds")
+    ap.add_argument('--width', type=int, default=1280)
+    ap.add_argument('--height', type=int, default=720)
+    ap.add_argument('--max-rgbd', type=int, default=2,
+                    help="How many RGBD (RealSense/Kinect) cameras to use, default 2. "
+                         "Set to 1 or 0 to exclude a camera that is being removed from "
+                         "the rig or is in a bad USB state.")
+    ap.add_argument('--depth-width', type=int, default=None,
+                    help="Depth STREAM width (default: same as --width). Independent "
+                         "of --width because depth is aligned to the colour stream, so "
+                         "the written depth video is at colour resolution regardless. "
+                         "848 is the D435's native depth resolution and cuts USB "
+                         "bandwidth if that is ever the constraint.")
+    ap.add_argument('--depth-height', type=int, default=None,
+                    help="Depth STREAM height (default: same as --height).")
+    ap.add_argument('--lucid-packet-size', type=int, default=1400,
+                    help="Lucid GevSCPSPacketSize in bytes (default 1400). Larger means "
+                         "fewer packets per frame, so less total inter-packet delay. "
+                         "Requires a matching network MTU (jumbo frames on NIC AND "
+                         "switch for values much above 1500).")
+    ap.add_argument('--lucid-packet-delay', type=int, default=60000,
+                    help="Lucid GevSCPD inter-packet delay (default 60000 = 60us). The "
+                         "dominant limit on Lucid's frame rate: ~1975 packets/frame x "
+                         "60us = 118ms, an 8.4 fps ceiling that is BELOW a 15 fps "
+                         "target and matches the 8.5 fps measured on macOS. Lower it "
+                         "while watching the 'incomplete' count for dropped packets. "
+                         "NOTE: this value is stored non-volatile on the camera.")
+    args = ap.parse_args()
+
     record_all_cameras(
-        duration_seconds=50,
-        width=1280,
-        height=720,
-        fps=5       
+        duration_seconds=args.duration,
+        width=args.width,
+        height=args.height,
+        fps=args.fps,
+        max_rgbd=args.max_rgbd,
+        lucid_packet_size=args.lucid_packet_size,
+        lucid_packet_delay=args.lucid_packet_delay,
+        depth_width=args.depth_width,
+        depth_height=args.depth_height,
     )

@@ -1,0 +1,6 @@
+path: /home/diky85bu/MOT_of_Polybags/real_polybags/dataset/annotated
+train: train_v11_obb_final/images
+val: val_v11_obb_final/images
+
+nc: 2
+names: ['class_0', 'class_1']  # semantics unconfirmed — see real_polybags/README.md

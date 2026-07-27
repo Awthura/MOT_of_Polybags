@@ -1,0 +1,7 @@
+{
+  "real_polybags_train": {
+    "annotation": "/home/diky85bu/MOT_of_Polybags/real_polybags/training/locate_anything/jsonl_data/bisect/half2.jsonl",
+    "root": "/home/diky85bu/MOT_of_Polybags/real_polybags/dataset/annotated/train_v11_obb_final",
+    "repeat_time": 1.0
+  }
+}

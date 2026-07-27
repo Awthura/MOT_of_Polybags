@@ -16,6 +16,7 @@
 *.bin
 *.h5
 *.hdf5
+*.safetensors
 
 # Blender and 3D assets
 *.blend
@@ -51,7 +52,13 @@ pipeline_output/
 pseudo_label/
 real_polybags/dataset/annotated/
 real_polybags/dataset/unlabelled/
+real_polybags/dataset/unlabelled_autolabels/
+real_polybags/dataset/unlabelled_autolabels_v4/
+# 839MB, ~95% regenerable overlay JPEGs; labels are reproducible from the
+# scripts + the round-2 model. Same rationale as the two trees above.
+real_polybags/dataset/unlabelled_autolabels_v4_tiled/
 real_polybags/training/locate_anything/pilot_sample/
+real_polybags/training/locate_anything/checkpoints/
 *.cache
 
 # Calibration / review state (local machine-specific)

@@ -1,0 +1,107 @@
+{
+  "rgb_frame1_000060.png": {
+    "n_pred": 11,
+    "n_gt": 9,
+    "precision": 0.7272727272727273,
+    "recall": 0.8888888888888888,
+    "mean_iou_matched": 0.8137720905040731
+  },
+  "rgb_frame1_000434.png": {
+    "n_pred": 15,
+    "n_gt": 11,
+    "precision": 0.6666666666666666,
+    "recall": 0.9090909090909091,
+    "mean_iou_matched": 0.8433847483548131
+  },
+  "rgb_frame1_000623.png": {
+    "n_pred": 13,
+    "n_gt": 11,
+    "precision": 0.7692307692307693,
+    "recall": 0.9090909090909091,
+    "mean_iou_matched": 0.7551770839190022
+  },
+  "rgb_frame1_000679.png": {
+    "n_pred": 13,
+    "n_gt": 12,
+    "precision": 0.8461538461538461,
+    "recall": 0.9166666666666666,
+    "mean_iou_matched": 0.7893699383254856
+  },
+  "rgb_frame1_001036.png": {
+    "n_pred": 0,
+    "n_gt": 4,
+    "precision": 0.0,
+    "recall": 0.0,
+    "mean_iou_matched": 0.0
+  },
+  "rgb_frame1_001155.png": {
+    "n_pred": 0,
+    "n_gt": 11,
+    "precision": 0.0,
+    "recall": 0.0,
+    "mean_iou_matched": 0.0
+  },
+  "rgb_frame1_001180.png": {
+    "n_pred": 0,
+    "n_gt": 10,
+    "precision": 0.0,
+    "recall": 0.0,
+    "mean_iou_matched": 0.0
+  },
+  "rgb_frame1_001205.png": {
+    "n_pred": 0,
+    "n_gt": 10,
+    "precision": 0.0,
+    "recall": 0.0,
+    "mean_iou_matched": 0.0
+  },
+  "rgb_frame1_002009.png": {
+    "n_pred": 8,
+    "n_gt": 8,
+    "precision": 0.625,
+    "recall": 0.625,
+    "mean_iou_matched": 0.7035220794803672
+  },
+  "rgb_frame_000053.png": {
+    "n_pred": 16,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.9411764705882353,
+    "mean_iou_matched": 0.780063884815933
+  },
+  "rgb_frame_000109.png": {
+    "n_pred": 16,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.9411764705882353,
+    "mean_iou_matched": 0.7810266579080228
+  },
+  "rgb_frame_000165.png": {
+    "n_pred": 16,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.9411764705882353,
+    "mean_iou_matched": 0.7792986363172324
+  },
+  "rgb_frame_000221.png": {
+    "n_pred": 16,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.9411764705882353,
+    "mean_iou_matched": 0.7833893802857633
+  },
+  "rgb_frame_000277.png": {
+    "n_pred": 16,
+    "n_gt": 17,
+    "precision": 1.0,
+    "recall": 0.9411764705882353,
+    "mean_iou_matched": 0.7894276173926783
+  },
+  "rgb_frame_000555.png": {
+    "n_pred": 15,
+    "n_gt": 11,
+    "precision": 0.6666666666666666,
+    "recall": 0.9090909090909091,
+    "mean_iou_matched": 0.856106053051449
+  }
+}
