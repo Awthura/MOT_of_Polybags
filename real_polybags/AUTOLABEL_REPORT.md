@@ -415,39 +415,302 @@ masking (`apply_belt_masks_v4.py`).
   agreement between two models isn't a clean signal when both share a
   failure mode.
 
-**`unlabelled_autolabels_v4/labels_cleaned_masked/` is now the overall
-recommended label set**, superseding both `unlabelled_autolabels/labels_cleaned/`
-and `unlabelled_autolabels/labels_cleaned_masked/` (the `real_v3`-based ones).
-
 | Round-2 artifact | Location |
 |---|---|
 | Round-2 training data + letterboxing script | `real_polybags/training/locate_anything/prepare_jsonl_round2.py` |
 | Round-2 sbatch script (with all 3 cluster-env fixes) | `real_polybags/training/locate_anything/run_finetune_round2.slurm` |
 | Fine-tuned model (cluster only, not yet pulled locally) | `~/runs_locateanything_lora/real_v4_round2/` |
-| **Recommended final labels (v4, cleaned + masked)** | `real_polybags/dataset/unlabelled_autolabels_v4/labels_cleaned_masked/<camera>/` |
-| Raw v4 autolabel predictions | `real_polybags/dataset/unlabelled_autolabels_v4/labels/<camera>/` |
 | v4 cleanup script | `real_polybags/dataset/clean_autolabels_v4.py` |
 | v4 belt-mask application script | `real_polybags/dataset/apply_belt_masks_v4.py` |
+
+## 9. Manual review findings: whole-belt fallback pattern
+
+Rendered overlays for the full `labels_cleaned_masked` set
+(`render_final_overlays_v4.py`, all 2,926 images, local-only) and reviewed
+them directly. Two issues reported:
+
+1. **Some boxes still cover almost the entire frame.**
+2. **Some visible bags aren't labelled** (missed detections in dense
+   clusters).
+
+### Issue 1 — root-caused and fixed
+
+The existing full-frame filter (`analyze_autolabels.py`'s `is_fullframe`,
+w≥0.95 AND h≥0.95) only catches a box spanning the literal *frame*. The
+actual pattern found on manual review is a box spanning almost the entire
+**belt** — sized to each camera's belt geometry (e.g. lucid's version was
+w=0.73/h=1.00, `basler_2`'s was w=0.72/h≈1.00), which slips through since
+it's not 95% of the raw frame in both dimensions. Visually confirmed on
+several examples: an empty belt (just a person's arm reaching in, no bag)
+gets one giant box roughly matching the belt's own boundary instead of no
+detections — the same "fall back to boxing everything" pathology as the
+literal full-frame case, just scoped to the belt rather than the frame.
+
+**Fix** (`drop_wholebelt_boxes.py`): using the belt masks we already built
+(`build_belt_masks.py`), flag a box as a whole-belt fallback if it's large
+(≥35% of frame area) **and** covers ≥90% of the belt mask's own pixel area.
+Verified against all 405 candidate boxes found dataset-wide: 404/405 covered
+≥99.6% of the belt (all confirmed degenerate on visual inspection — several
+checked directly), and the **one** exception covered only 64.6% of the belt
+and was confirmed by inspection to be a real, correctly-boxed large bag —
+a wide, clean safety margin either side of the 90% cutoff, so no real
+detections were at risk of being dropped.
+
+| | Before fix | After fix |
+|---|---|---|
+| Total boxes | 5,678 | 5,274 |
+| Whole-belt fallback boxes | 404 | 0 |
+
+Breakdown: `basler_2` 277 affected images, `lucid` 112, `rgbd_2_color` 15,
+`basler_1`/`rgbd_1_color` 0. **`unlabelled_autolabels_v4/labels_final/` is
+now the overall recommended label set**, superseding
+`labels_cleaned_masked/` (both v3's and v4's) and `labels_cleaned/`.
+
+### Issue 2 — investigated, not a post-processing bug
+
+Sampled dense multi-bag frames and found a genuine example: a frame with 9
+visually distinct bags got only 8 boxes, missing one that was fully
+in-frame (not edge-cropped) and not occluded. Checked whether YOLO's
+independent prediction on the same frame caught it (which would let
+cross-validation rescue it, the way the belt-mask work used model
+agreement elsewhere) — **it didn't; both models missed the same bag.**
+This means it isn't fixable by post-processing (nothing in the *output* of
+a single missed detection signals that a detection is missing), and it
+isn't resolvable by cross-checking against YOLO either, since YOLO shares
+the same gap on this example. Other sampled busy frames (6-8 bags each,
+several cameras) showed correct, tight boxes on every visible bag including
+partially-cropped ones at frame edges, so this looks like an occasional
+recall gap in the hardest, most cluttered/overlapping cases specifically,
+not a systematic pattern with an identifiable fix. Documented here as a
+known, accepted residual limitation rather than papered over.
+
+| Manual-review artifact | Location |
+|---|---|
+| **Recommended final labels (v4, cleaned + masked + whole-belt fix)** | `real_polybags/dataset/unlabelled_autolabels_v4/labels_final/<camera>/` |
+| Full-dataset overlay renderer (any label set, local-only) | `real_polybags/dataset/render_final_overlays_v4.py` |
+| Whole-belt fallback fix script | `real_polybags/dataset/drop_wholebelt_boxes.py` |
+| Fix stats | `real_polybags/dataset/unlabelled_autolabels_v4/wholebelt_fix_stats.json` |
+| Changed-image overlays (404 images) | `real_polybags/dataset/unlabelled_autolabels_v4/overlays_wholebelt_fix/<camera>/` |
+
+## 10. Fixing missed detections in dense clusters (tiled + iterative inference)
+
+Issue 2 from section 9 (occasional missed bags in the densest clusters,
+confirmed not fixable by post-processing) prompted a short research pass —
+see the plan this section implements — into whether iterative retraining,
+SAM 3, or using LocateAnything as a segmentor would help. Findings, briefly:
+LocateAnything's own paper documents this exact failure mode ("Spatial
+Ambiguity" in dense scenes, mitigated upstream via training-data
+composition, not an architecture fix); SAM 3 is a genuinely different tool
+(native promptable segmentation, no such capability in LocateAnything) but
+is **not** immune to the same crowded-scene miss pattern itself; the
+literature's actual architecture-agnostic fix is inference-time tiling
+(SAHI) + iterative re-detection (IterDet) — zero retraining, directly
+applicable to the existing `LocateAnythingWorker` API. Decided to implement
+this (Tier 1) first, deferring a targeted round-3 retrain and SAM 3
+integration (Tiers 2/3).
+
+### Implementation and validation
+
+`autolabel_tiled.py`: slices each frame into an overlapping 2x2 tile grid,
+runs detection on each tile plus the full frame, merges results, then does
+up to 2 rounds of iterative re-detection (paint over what's already found,
+re-run on the residual image, merge in anything genuinely new). Tiling
+coverage, coordinate remapping, and merge logic were unit-tested locally
+with a mock worker (zero model calls) before any cluster run.
+
+First cluster test recovered the target frame's missing bag, but also
+surfaced a genuine merge bug: a bag split across two tiles produced a
+partial duplicate box that symmetric IoU (0.46) didn't catch. Root cause:
+a small box that's mostly *contained* within a larger one is a strong
+duplicate signal regardless of the area mismatch that penalizes IoU —
+confirmed via a containment ratio (intersection over smaller-box area,
+"IoS") of 0.92 for the duplicate vs. 0.61 for a manually-confirmed
+genuinely-distinct overlapping bag pair, a clean margin. Added
+`MERGE_IOS_THRESH=0.85` alongside IoU; retested and got the target frame
+fully correct (9/9 bags, no duplicates) with no effect on the
+distinct-pair case.
+
+### Full-dataset run and a second bug found at scale
+
+With single-frame validation clean, ran the full 2,926-image dataset
+(`unlabelled_autolabels_v4_tiled/`, ~2h). Cross-validating against YOLO
+afterward showed `basler_1`'s LA-agreement had collapsed from 63.1% (no
+tiling) to 17.4% — despite belt-masking barely touching its boxes (0.7%
+dropped), meaning the extra boxes were landing on the belt itself, not on
+known static clutter. Manual inspection of the frames with the biggest
+box-count jumps found several **completely empty belts** with 3-5 new
+boxes each, whose coordinates matched the tiling grid's own rectangles
+almost exactly (measured IoU=0.9975 against a tile's true bounds). This is
+a third variant of the "fall back to boxing everything instead of nothing"
+pathology already found and fixed at the frame level (section 3) and the
+belt level (section 9) — this time triggered by low-content/ambiguous
+*individual tile crops*, small enough to slip under both the frame-fraction
+and belt-coverage thresholds of the existing fixes.
+
+**Fix** (`drop_wholetile_boxes.py`, pure local post-processing, no cluster
+re-run needed since tile geometry is fixed and known for every image):
+drop any box with IoU≥0.85 against any of the 4 known tile rectangles.
+Verified against the one confirmed real large-bag box on file (54% of
+frame) before running at scale — its max IoU with any tile was 0.40, a
+comfortable margin below the threshold. Dropped 1,187 boxes dataset-wide
+(983 from `basler_1` alone, across 283/430 = 66% of its images — this
+camera was overwhelmingly the one affected). `basler_1` LA-agreement
+recovered to 45.6%.
+
+### A methodological correction: YOLO is not ground truth
+
+45.6% was still well below the 63.1% pre-tiling baseline, so before
+building anything further (Weighted Box Fusion was considered next, to
+reconcile any remaining tile-boundary fragments), the still-unmatched LA
+boxes on `basler_1` were inspected directly — specifically by rendering
+**YOLO's detections alone**, without LA's boxes overlaid, to avoid
+anchoring on LA's output when judging YOLO. Across 6 of `basler_1`'s
+busiest frames, YOLO found as few as 1 of 6-7 visibly distinct bags, and
+never found more than 7 of ~9 — a severe, camera-specific YOLO recall
+problem, not a LocateAnything problem. This means the cross-validation
+agreement metric itself was misleading here: it was penalizing the tiled
+LA output for finding *more real bags than a demonstrably under-detecting
+YOLO reference does*, not for making mistakes. Weighted Box Fusion was
+**not** pursued on this basis — there is no longer solid evidence of a
+real fragmentation problem to fix, and building more merge logic to chase
+an unreliable metric would be solving the wrong problem. General lesson,
+consistent with section 5's "agreement between two models isn't a clean
+signal when both share a failure mode": it's equally not a clean signal
+when one reference model has its own independent, camera-specific
+weakness — cross-validation numbers should prompt visual verification
+before being read as scores.
+
+**Follow-up: is this `basler_1`-specific, or does it call the whole
+project's YOLO cross-validation into question?** Checked directly — for
+each of the other 4 cameras, rendered YOLO-only overlays for their single
+busiest LA/YOLO-count-gap frame. Result: YOLO catches most of the visible
+bags on all four (11/13 on `rgbd_1_color`, 6/7 on `basler_2`, ~5/8 on
+`lucid`, ~4/7 on `rgbd_2_color`) — nowhere close to `basler_1`'s
+catastrophic 1-of-6/7 pattern. **Confirmed `basler_1`-specific.** The
+section 5/6/8 cross-validation numbers for the other four cameras stand;
+only `basler_1`'s historical agreement figures throughout this report
+should be read with this caveat. (Root cause of *why* `basler_1`
+specifically is harder for YOLO wasn't investigated further — camera
+framing/distance/lighting are plausible candidates but unconfirmed.)
+
+**`unlabelled_autolabels_v4_tiled/labels_final_v2/` is the current
+dense-cluster-improved label set** — not yet promoted to "overall
+recommended" ahead of `unlabelled_autolabels_v4/labels_final/` pending the
+open items below, but confirmed to fix the target recall issue without
+the regressions initially suspected.
+
+| Tiled-inference artifact | Location |
+|---|---|
+| Tiling + iterative re-detection script | `real_polybags/training/locate_anything/autolabel_tiled.py` |
+| Whole-tile fallback fix (local post-processing) | `real_polybags/dataset/drop_wholetile_boxes.py` |
+| Tile-fragment merge fix (local post-processing) | `real_polybags/dataset/merge_fragments_tiled.py` |
+| Cleanup/mask scripts for this run | `real_polybags/dataset/clean_autolabels_tiled.py`, `apply_belt_masks_tiled.py` |
+| **Current best labels** (tiled, whole-tile-fixed, fragment-merged) | `real_polybags/dataset/unlabelled_autolabels_v4_tiled/labels_final_v3/<camera>/` |
+| Overlays for the above | `real_polybags/dataset/unlabelled_autolabels_v4_tiled/overlays_final_v3/` |
+| Implementation plan (full research + decision log) | `~/.claude/plans/vivid-foraging-flurry.md` |
+
+### Promotion decision: `labels_final_v3` is the recommended set
+
+The tiled set was held back from promotion pending a full overlay review
+(only spot-checks and the whole-tile-fix diff frames had been looked at).
+That review was done, and it resolved the question decisively — but in the
+opposite direction to the one being guarded against.
+
+**The risk was assumed to be that tiling added false positives.** The
+sharpest test for that is frames that had *zero* boxes in the non-tiled set
+and gained boxes under tiling — 127 such frames (63 `basler_1`, 33 `lucid`,
+25 `rgbd_2_color`, 5 `basler_2`, 1 `rgbd_1_color`). Inspecting the three
+with the most new boxes, **all three were real recoveries, not false
+positives**: `rgbd_2_color_frame_0000136` has ~12 plainly visible bags on
+the belt and the non-tiled set returned *nothing* for it; likewise
+`rgbd_1_color_frame_0000163` (5 bags) and `rgbd_2_color_frame_0000097`
+(4 bags). So the previously-recommended `labels_final` set has a
+catastrophic, not marginal, recall hole: on some dense frames the model
+emits **no boxes at all**. That is the mirror image of the
+"fallback-to-everything" pathology documented above — a
+*fallback-to-nothing* mode — and tiling is what breaks it, by reducing
+objects-per-call below whatever threshold triggers it.
+
+**A real (if minor) tiling artifact did show up, and is now fixed.**
+Counting box pairs by IoS (intersection over the smaller box's area — the
+containment measure), the tiled set had **191 pairs in the IoS 0.70–0.85
+band** versus 13 for the non-tiled set: fragments sitting just under
+`autolabel_tiled.py`'s `MERGE_IOS_THRESH=0.85` cut. That threshold had been
+calibrated on a single frame from just two data points (a confirmed
+duplicate at 0.92, a confirmed distinct pair at 0.61), so it was
+conservative by construction. Sampling the band visually settled where the
+boundary actually is:
+
+| IoS band | sampled verdict |
+|---|---|
+| 0.70–0.85 | 4/4 inspected pairs were **duplicates** — one box a thin partial sliver of the same bag |
+| 0.60–0.70 | inspected pairs were **genuinely distinct bags** in dense piles; merging would be wrong |
+
+So the true boundary is ~0.70, and `merge_fragments_tiled.py` re-merges at
+IoS ≥ 0.70 (keeping the larger box, dropping the contained fragment) as a
+local post-processing pass — no cluster re-run needed. Result:
+
+| set | boxes | IoS ≥ .85 pairs | .70–.85 | .60–.70 |
+|---|---|---|---|---|
+| `v4/labels_final` (non-tiled) | 5,274 | 7 | 13 | 27 |
+| `v4_tiled/labels_final_v2` | 7,364 | 0 | 191 | 159 |
+| **`v4_tiled/labels_final_v3`** | **7,184** | **0** | **0** | 155 |
+
+`labels_final_v3` therefore beats the non-tiled set on *both* axes at once:
+**+36% boxes** (5,274 → 7,184, per-camera range +18% to +49%) and **fewer
+duplicate pairs** (0 above IoS 0.70, vs 20 for the non-tiled set — that
+pipeline never had an IoS merge pass at all). The 155 remaining 0.60–0.70
+pairs are the verified genuinely-distinct stacked bags and are correctly
+kept.
+
+Caveat worth recording: box *localization* in dense piles is visibly loose
+(boxes offset from bag edges, roughly one per bag rather than tightly
+bounding it). That is a model-quality limit, not a pipeline bug, and no
+post-processing pass addresses it — it is the strongest remaining argument
+for Tier 2/Tier 3 if tighter boundaries are ever needed.
 
 ## Next steps
 
 - Pull `real_v4_round2` locally (~7.4GB, mirrors `real_v3_multibox_sdpa`'s
   layout) if local inference/inspection is needed — currently cluster-only.
+- ~~Check whether YOLO's `basler_1` recall weakness is isolated or
+  broader~~ — **done** (section 10): confirmed `basler_1`-specific via
+  YOLO-only overlays on the other 4 cameras' worst-gap frames, all of which
+  showed YOLO catching most visible bags. Section 5/6/8 numbers for
+  `basler_2`/`lucid`/`rgbd_1_color`/`rgbd_2_color` stand as-is; only
+  `basler_1`'s historical agreement figures carry the caveat. Root cause of
+  *why* `basler_1` specifically is harder for YOLO remains unconfirmed
+  (camera framing/distance/lighting are plausible, unverified guesses) —
+  worth a look if `basler_1`-specific work comes up again.
+- ~~Decide whether to promote the tiled set to the overall recommended
+  set~~ — **done**: promoted, but as `labels_final_v3` (see "Promotion
+  decision" above). Full overlay review found the non-tiled set has a
+  fallback-to-nothing recall hole on dense frames, and the one genuine
+  tiling artifact (191 surviving tile fragments) is fixed by
+  `merge_fragments_tiled.py`. Net: +36% boxes and fewer duplicates.
+- Box *localization* tightness in dense piles is the main remaining quality
+  gap and is not fixable in post-processing — this is now the strongest
+  concrete motivation for Tier 2 (round-3 fine-tune) or Tier 3 (SAM 3
+  masks) should tighter boundaries be needed downstream.
+- The non-tiled `v4/labels_final` set still carries 20 unmerged duplicate
+  pairs (7 at IoS ≥ 0.85). Not worth fixing since it's superseded by
+  `labels_final_v3`, but note it if that set is ever used for comparison.
 - `basler_2` and `rgbd_2_color` still show some residual clutter-attraction
   after round 2 (belt masking still drops 9.5-10.3% of their boxes, vs
   ~0-1% for the other three cameras) — worth a closer look at what's driving
   that specifically, and whether a round 3 (or more pseudo-label coverage
   from those two cameras) would close the gap.
-- LA-agreement against YOLO is now 74.0% (up from 66.8%), but not 100% —
-  worth investigating the remaining in-belt disagreement (not just clutter)
-  to see if it's genuine model error on either side or a further
-  cross-camera quirk.
-- Consider reporting both the MagiAttention multi-block bug and the
-  mixed-resolution NaN-crash bug upstream to NVLabs/Eagle — both real,
+- Consider reporting the MagiAttention multi-block bug, the mixed-resolution
+  NaN-crash bug, and (if it turns out NVLabs' base model has the same
+  whole-frame/whole-belt/whole-tile fallback pathology zero-shot) the
+  fallback-instead-of-none pattern upstream to NVLabs/Eagle — all real,
   reproducible, and (as far as could be determined) previously unreported.
 - Confirm `class_0`/`class_1` semantics if per-class autolabels are ever
   needed (currently everything is one merged class).
-- Use `labels_cleaned_masked/` (or fresh `real_v4_round2` autolabels, once
-  regenerated) — not `labels_cleaned/` or the raw `labels/` — for anything
-  downstream, e.g. a second YOLO training round on the combined annotated +
-  autolabelled set.
+- Tier 2 (targeted round-3 fine-tune oversampling dense-cluster frames) and
+  Tier 3 (SAM 3 as a third cross-validator / segmentation masks / temporal
+  continuity) from the dense-cluster-fix plan remain deliberately deferred.
+- Use **`labels_final_v3/`** (tiled, whole-tile-fixed, fragment-merged) for
+  anything downstream — e.g. a second YOLO training round on the combined
+  annotated + autolabelled set. Not `labels_final_v2/`, `labels_final/`,
+  `labels_cleaned_masked/`, `labels_cleaned/`, or the raw `labels/`.
