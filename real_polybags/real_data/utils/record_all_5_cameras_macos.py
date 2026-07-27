@@ -81,6 +81,7 @@ class CameraWorker:
         self.lock         = threading.Lock()
         self.error        = None
         self.start_time   = None
+        self.end_time     = None   # set on capture-loop exit; freezes elapsed()
         # Setup and the actual synchronized start are decoupled: each worker
         # signals setup_done (success or failure) independently, so a camera
         # that fails to connect doesn't block the ones that did — replaces
@@ -90,22 +91,35 @@ class CameraWorker:
         self.setup_done   = threading.Event()
         self.setup_ok     = False
         self.go_event     = None
+        # Safety net only — the coordinator is expected to always signal
+        # go_event. This MUST stay comfortably larger than the coordinator's
+        # total setup budget: a worker whose go-wait expires *before* the
+        # coordinator has finished deciding will exit having recorded nothing,
+        # even though it connected fine. That is exactly what happened when
+        # this timeout and the coordinator's were both 35s — the workers
+        # started their countdown first (at their own ready moment) and so
+        # lost the race by a few seconds, producing a "4/5 cameras ready"
+        # run in which all 4 reported Frames: 0. set_go_event() derives it.
+        self.go_timeout   = 300.0
 
-    def set_go_event(self, go_event):
+    def set_go_event(self, go_event, go_timeout=None):
         self.go_event = go_event
+        if go_timeout is not None:
+            self.go_timeout = go_timeout
 
     def mark_ready(self, ok):
         if not self.setup_done.is_set():
             self.setup_ok = ok
             self.setup_done.set()
 
-    def wait_for_go(self, timeout=35):
+    def wait_for_go(self, timeout=None):
         """Call after setup succeeds. Returns False if the go signal never
         arrives (e.g. another camera's setup took too long)."""
         self.mark_ready(True)
         if self.go_event is None:
             return True
-        return self.go_event.wait(timeout=timeout)
+        return self.go_event.wait(
+            timeout=self.go_timeout if timeout is None else timeout)
 
     def stop(self):
         self.running = False
@@ -134,7 +148,23 @@ class CameraWorker:
             return self.latest_frame.copy() if self.latest_frame is not None else None
 
     def elapsed(self):
-        return time.time() - self.start_time if self.start_time else 0
+        """Seconds spent recording. Freezes once the worker stops.
+
+        Previously this always used a live time.time(), so the clock kept
+        running after the capture loop exited while frame_count stayed fixed.
+        The end-of-run summary prints after teardown and thread joins, several
+        seconds later, so every camera's fps was reported meaningfully lower
+        there than on its own "Done" line — e.g. a camera that actually hit
+        14.9 fps (149 frames in 10s) was summarised as 12.6.
+        """
+        if not self.start_time:
+            return 0
+        end = self.end_time if self.end_time else time.time()
+        return end - self.start_time
+
+    def mark_finished(self):
+        if self.end_time is None:
+            self.end_time = time.time()
 
     def actual_fps(self):
         return self.frame_count / max(self.elapsed(), 0.001)
@@ -259,6 +289,7 @@ class BaslerWorker(CameraWorker):
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             if camera and camera.IsOpen():
                 camera.StopGrabbing()
                 camera.Close()
@@ -416,6 +447,7 @@ class LucidWorker(CameraWorker):
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             try:
                 camera.stop_acquisition()
             except Exception:
@@ -433,11 +465,27 @@ class LucidWorker(CameraWorker):
 # mark_ready()/wait_for_go() like the other worker types.
 # ─────────────────────────────────────────────────────────────────────────────
 class RGBDWorker(CameraWorker):
-    def __init__(self, index, width, height, fps, duration, color_file, depth_file):
+    # Depth is requested from the sensor at `depth_width`x`depth_height`, which
+    # is deliberately NOT tied to the colour resolution: _run() aligns depth to
+    # the colour stream (rs.align(rs.stream.color)), so the aligned depth frame
+    # — and therefore the written depth video — comes out at colour resolution
+    # regardless of what the sensor streamed. That makes the depth stream size a
+    # free lever on USB bandwidth.
+    #
+    # It matters because two D435s on one USB controller at 1280x720 depth +
+    # colour is roughly 138 MB/s of payload, and one camera loses the bus:
+    # "Frame didn't arrive within 5000" during the warmup. 848x480 is the D435's
+    # native depth resolution and saves ~15 MB/s per camera for no loss in
+    # output — depth detail beyond the sensor's real resolution was interpolated
+    # anyway.
+    def __init__(self, index, width, height, fps, duration, color_file, depth_file,
+                 depth_width=848, depth_height=480):
         super().__init__(f"RGBD_{index + 1}", width, height, fps, duration, color_file)
-        self.index      = index
-        self.depth_file = depth_file
-        self.depth_out  = None
+        self.index        = index
+        self.depth_file   = depth_file
+        self.depth_out    = None
+        self.depth_width  = depth_width
+        self.depth_height = depth_height
 
     def _init_depth_writer(self):
         fourcc = cv2.VideoWriter_fourcc(*'MJPG')
@@ -482,7 +530,11 @@ class RGBDWorker(CameraWorker):
                 # a bare Python float (e.g. from --fps 10.0) is rejected.
                 rs_fps = int(round(self.fps))
                 config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, rs_fps)
-                config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, rs_fps)
+                # Depth at its own (smaller) resolution to save USB bandwidth —
+                # align.process() resamples it to colour resolution anyway, so
+                # the written depth video is unaffected. See class docstring.
+                config.enable_stream(rs.stream.depth, self.depth_width,
+                                     self.depth_height, rs.format.z16, rs_fps)
                 try:
                     profile = pipeline.start(config)
                     break
@@ -492,7 +544,15 @@ class RGBDWorker(CameraWorker):
                         pipeline.stop()
                     except Exception:
                         pass
-                    wait_s = 2.0 * (attempt + 1)
+                    if attempt == 3:
+                        # Don't sleep after the final attempt — the old code
+                        # burned 8s here before raising, for no gain, and that
+                        # alone pushed this worker's setup past the
+                        # coordinator's budget.
+                        print(f"[{self.name}] pipeline.start() failed ({e}) "
+                              f"on final attempt 4/4")
+                        break
+                    wait_s = 1.5 * (attempt + 1)   # 1.5 + 3.0 + 4.5 = 9s total
                     print(f"[{self.name}] pipeline.start() failed ({e}), "
                           f"retrying in {wait_s:.1f}s (attempt {attempt + 1}/4)")
                     time.sleep(wait_s)
@@ -542,6 +602,7 @@ class RGBDWorker(CameraWorker):
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             if pipeline is not None:
                 try:
                     pipeline.stop()
@@ -644,7 +705,8 @@ def display_loop(workers, duration, verbose):
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
-def record_all_cameras(duration_seconds, width, height, fps, verbose):
+def record_all_cameras(duration_seconds, width, height, fps, verbose,
+                       max_realsense=2, depth_width=848, depth_height=480):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     workers   = []
 
@@ -688,18 +750,27 @@ def record_all_cameras(duration_seconds, width, height, fps, verbose):
             workers[-1].precreated_camera = camera
 
     # ── 3. RealSense RGBD ─────────────────────────────────────────────────────
-    if REALSENSE_AVAILABLE:
+    # `max_realsense` exists because a RealSense in a bad USB state can
+    # SIGSEGV inside libusb (null deref in darwin_submit_transfer, reached via
+    # librealsense's usb_messenger_libusb::control_transfer). That kills the
+    # whole process, taking the GigE cameras down with it, and it cannot be
+    # caught from Python. Capping the count lets a session proceed with the
+    # cameras that do work instead of losing everything to one flaky unit.
+    if REALSENSE_AVAILABLE and max_realsense > 0:
         print("\n=== Enumerating RealSense cameras ===")
         ctx  = rs.context()
         devs = ctx.query_devices()
         print(f"Found {len(devs)} RealSense camera(s)")
-        for i, dev in enumerate(devs[:2]):
+        if len(devs) > max_realsense:
+            print(f"  (using only the first {max_realsense} — --max-realsense)")
+        for i, dev in enumerate(devs[:max_realsense]):
             sn = dev.get_info(rs.camera_info.serial_number)
             print(f"[RGBD_{i+1}] Prepared: S/N {sn}")
             workers.append(RGBDWorker(
                 i, width, height, fps, duration_seconds,
                 f"rgbd_{i+1}_color_{width}x{height}_{timestamp}.avi",
                 f"rgbd_{i+1}_depth_{width}x{height}_{timestamp}.avi",
+                depth_width=depth_width, depth_height=depth_height,
             ))
 
     if not workers:
@@ -712,9 +783,17 @@ def record_all_cameras(duration_seconds, width, height, fps, verbose):
     # returns — it does NOT block the others (unlike a fixed-size
     # threading.Barrier, which requires every worker to arrive or times out
     # taking every other camera down with it).
+    # One wall-clock budget for the whole setup phase, shared across all
+    # cameras — deliberately not per-camera. With a per-camera timeout the
+    # worst case was 35s x n_cameras, during which cameras that were already
+    # connected sat waiting and then gave up. Workers get a go-wait timeout
+    # derived from this budget so they cannot expire before this thread has
+    # decided whether to start.
+    SETUP_BUDGET = 45.0
+
     go_event = threading.Event()
     for w in workers:
-        w.set_go_event(go_event)
+        w.set_go_event(go_event, go_timeout=SETUP_BUDGET + 60.0)
 
     print(f"\nConnecting to {len(workers)} camera(s), target FPS: {fps}...")
     for w in workers:
@@ -722,9 +801,12 @@ def record_all_cameras(duration_seconds, width, height, fps, verbose):
         w.thread  = threading.Thread(target=w._run, daemon=True)
         w.thread.start()
 
-    print("Waiting for all cameras to finish setup (up to 35s each)...")
+    print(f"Waiting for all cameras to finish setup "
+          f"({SETUP_BUDGET:.0f}s total budget)...")
+    setup_deadline = time.time() + SETUP_BUDGET
     for w in workers:
-        if not w.setup_done.wait(timeout=35):
+        remaining = max(0.0, setup_deadline - time.time())
+        if not w.setup_done.wait(timeout=remaining):
             print(f"[{w.name}] setup did not report back in time — treating as failed")
             w.mark_ready(False)
 
@@ -736,6 +818,7 @@ def record_all_cameras(duration_seconds, width, height, fps, verbose):
               f"skipped: {[w.name for w in failed_workers]}")
     if not ready_workers:
         print("ERROR: no cameras successfully initialized — aborting")
+        go_event.set()  # unblock any worker still parked in wait_for_go()
         return
 
     print(f"{len(ready_workers)}/{len(workers)} camera(s) ready — "
@@ -766,6 +849,19 @@ if __name__ == '__main__':
     ap.add_argument('--width', type=int, default=1280)
     ap.add_argument('--height', type=int, default=720)
     ap.add_argument('--verbose', action='store_true', help="Print per-camera actual FPS every 5s")
+    ap.add_argument('--max-realsense', type=int, default=2, choices=(0, 1, 2),
+                    help="How many RealSense cameras to use (default 2). Drop to 1 "
+                         "or 0 if one of them is in a bad USB state and crashes the "
+                         "process — a libusb SIGSEGV cannot be caught and would "
+                         "otherwise take the Basler/Lucid cameras down too.")
+    ap.add_argument('--depth-width', type=int, default=848,
+                    help="Depth STREAM width (default 848, the D435's native depth "
+                         "resolution). Independent of --width: depth is aligned to "
+                         "the colour stream, so the written depth video is always at "
+                         "colour resolution. Lower values free USB bandwidth, which "
+                         "is what lets two D435s share one controller.")
+    ap.add_argument('--depth-height', type=int, default=480,
+                    help="Depth STREAM height (default 480). See --depth-width.")
     args = ap.parse_args()
 
     record_all_cameras(
@@ -774,4 +870,7 @@ if __name__ == '__main__':
         height=args.height,
         fps=args.fps,
         verbose=args.verbose,
+        max_realsense=args.max_realsense,
+        depth_width=args.depth_width,
+        depth_height=args.depth_height,
     )

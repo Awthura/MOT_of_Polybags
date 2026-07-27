@@ -39,18 +39,26 @@ conda install -c conda-forge pyrealsense2 -y
 |---|---|---|
 | Basler ×2 | `pypylon` | **Verified working** against real hardware |
 | Lucid | Aravis (not Arena SDK) | **Verified working** against real hardware |
-| RGBD ×2 | `pyrealsense2` (conda-forge) | Verified import/enumeration; multi-camera "power state" issue, see below |
+| RGBD ×2 | `pyrealsense2` (conda-forge) | Needs `sudo` (USB power state). The old sudo-vs-Lucid conflict is resolved — see issue 1. Multi-camera hub issue still open, see issue 2 |
 
 ## Every session (macOS)
 
-Aravis needs Homebrew's GLib/GObject libraries visible from inside the conda
-env — required every new shell, for any script that touches Lucid:
+**Nothing to export any more.** This used to require
+`export DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH` in every new
+shell, which was also what made `sudo` and Lucid mutually exclusive (see
+"Resolved" below). That is fixed permanently by symlinks inside the conda
+env — do **not** set `DYLD_LIBRARY_PATH`; it is no longer needed, and
+`sudo -E`'s `-E` is now redundant too.
+
+If the conda env is ever rebuilt, re-create the symlinks:
 
 ```bash
-export DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH
+cd /opt/anaconda3/envs/ams/lib
+for L in libglib-2.0.0 libgobject-2.0.0 libgio-2.0.0 libgmodule-2.0.0 \
+         libgirepository-2.0.0 libaravis-0.8.0; do
+  ln -sf "/opt/homebrew/lib/$L.dylib" "$L.dylib"
+done
 ```
-
-Consider adding that line to `~/.zshrc` if recording sessions are frequent.
 
 ## Running
 
@@ -63,7 +71,17 @@ cd /Users/awthura/OVGU/AMS/real_polybags/real_data/raw_recordings
 python ../utils/record_basler_lucid_10_macos.py
 
 # All 5 cameras, target FPS + verbose per-camera FPS reporting:
-sudo -E /opt/anaconda3/envs/ams/bin/python ../utils/record_all_5_cameras_macos.py --fps 15 --duration 90 --verbose
+sudo /opt/anaconda3/envs/ams/bin/python ../utils/record_all_5_cameras_macos.py --fps 15 --duration 90 --verbose
+```
+
+Do a short `--duration 10` smoke run first to confirm all 5 cameras come up
+before committing to a real take.
+
+Note: under `sudo` the output `.avi` files are owned by `root`. Fix after a
+session with:
+
+```bash
+sudo chown "$USER" *.avi
 ```
 
 Always run from `raw_recordings/` (or any dedicated folder) so output `.avi`
@@ -75,46 +93,49 @@ no file editing needed for those on the combined script.
 
 ## Known issues
 
-### 1. RealSense needs `sudo` — but `sudo` breaks Aravis/Lucid
+### 1. ~~RealSense needs `sudo` — but `sudo` breaks Aravis/Lucid~~ — RESOLVED (2026-07-27)
 
-Since macOS Monterey, `pyrealsense2` needs root to claim the USB device and
-set its power state ("failed to set power state" without `sudo`). But when
-running under `sudo -E`, Aravis fails to load GLib/GObject even with
-`DYLD_LIBRARY_PATH` exported — macOS's dynamic linker strips `DYLD_*`
-environment variables for privilege-elevated processes; this is not
-something `sudo`'s `env_keep` config can override, since it's dyld's own
-behavior, not sudo's environment handling.
+`pyrealsense2` does need root to claim the USB device and set its power state
+("failed to set power state" without `sudo` — the Basler cameras are
+unaffected because they're GigE/Ethernet, not USB, which is why a non-sudo
+run gets *past* Basler init and dies on RealSense). The old blocker was that
+Aravis/Lucid needed `DYLD_LIBRARY_PATH`, and dyld strips `DYLD_*` for
+privilege-elevated processes.
 
-**Fix to try** (needs your password, hence not done automatically): symlink
-the needed libraries into `/usr/local/lib`, which is one of dyld's built-in
-default fallback search paths — checked regardless of `DYLD_LIBRARY_PATH` or
-privilege level, so it should survive `sudo`:
+**The earlier `/usr/local/lib` "fix to try" does not work, and the reason it
+can't is worth recording.** Those symlinks were created but are never
+consulted. Tracing the actual failure with `DYLD_PRINT_LIBRARIES=1` shows
+the real mechanism is not an absolute-path version clash but a **bare-name
+`dlopen` from the GI typelib**:
 
-```bash
-sudo mkdir -p /usr/local/lib
-sudo ln -sf /opt/homebrew/lib/libglib-2.0.0.dylib /usr/local/lib/
-sudo ln -sf /opt/homebrew/lib/libgobject-2.0.0.dylib /usr/local/lib/
-sudo ln -sf /opt/homebrew/opt/glib/lib/libgirepository-2.0.0.dylib /usr/local/lib/
+```
+GLib-GIRepository-WARNING: Failed to load shared library 'libglib-2.0.0.dylib'
+  referenced by the typelib: dlopen(libglib-2.0.0.dylib, 0x0009): tried:
+  'libglib-2.0.0.dylib' (no such file),
+  '/opt/anaconda3/envs/ams/bin/../lib/libglib-2.0.0.dylib' (no such file),
+  '/usr/lib/libglib-2.0.0.dylib' (no such file, not in dyld cache)
 ```
 
-Then retest:
-```bash
-sudo -E /opt/anaconda3/envs/ams/bin/python -c "
-import gi
-gi.require_version('Aravis', '0.8')
-from gi.repository import Aravis
-print('Aravis OK under sudo')
-"
-```
+`/usr/local/lib` is simply not in that effective search list — so symlinking
+there accomplishes nothing. But note the second path dyld tries:
+**`<env>/bin/../lib/`, i.e. the conda env's own `lib/`**. That directory *is*
+searched natively, with no env var and regardless of privilege level.
 
-If it still fails, paste the exact error — there may be one or two more
-libraries in the dependency chain to symlink the same way (check with
-`otool -L` on the failing library).
+**Actual fix**: symlink the libraries into `/opt/anaconda3/envs/ams/lib/`
+(command in "Every session" above). The env had no `libg*`/`libaravis` files
+of its own, so nothing is shadowed. Verified: Aravis enumerates all 3 GigE
+devices (both Baslers + `Lucid Vision Labs-TRI032S-C-232700105`) with **no
+`DYLD_*` variable set at all**, which is precisely why it now survives
+`sudo` — there is no longer any variable for dyld to strip.
 
-**Workaround if the above doesn't pan out**: run Basler+Lucid (no sudo) and
-RealSense (sudo) as two separate recording sessions instead of one combined
-5-camera run — you lose cross-camera start-time sync between the two groups,
-but each group individually works today.
+Supporting detail that makes this safe: `/opt/anaconda3/envs/ams/bin/python3.11`
+is adhoc-signed (`flags=0x2`) with no hardened-runtime flag, no
+library-validation entitlement, and is not setuid — so dyld honours its own
+default search paths for it under root exactly as it does for a normal user.
+
+Consequence: the old "run Basler+Lucid and RealSense as two separate
+sessions, losing cross-group start-time sync" workaround is no longer
+needed — a single combined 5-camera `sudo` run is the supported path.
 
 ### 2. RealSense: two cameras, second one fails to start
 
