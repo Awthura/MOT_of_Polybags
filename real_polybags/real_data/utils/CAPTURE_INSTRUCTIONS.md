@@ -2,8 +2,13 @@
 
 ## Scripts
 
-- `record_basler_lucid_rgbd.py` — supervisor's original (Windows/Linux only;
-  uses Arena SDK for Lucid, which has no macOS build).
+- `record_basler_lucid_rgbd.py` — **Windows/Linux script** (uses Arena SDK for
+  Lucid, which has no macOS build). Updated 2026-07-27 to carry the same fixes
+  as the macOS combined script: setup-then-go-signal sync instead of a
+  fixed-size `threading.Barrier` (one camera failing to connect no longer
+  raises BrokenBarrierError and loses the whole recording), frozen fps clock,
+  and a `--fps`/`--duration`/`--width`/`--height`/`--max-rgbd` CLI in place of
+  hardcoded values. See "Windows" below.
 - `record_basler_lucid_rgbd_macos.py` — macOS variant, 2 Basler + 1 Lucid +
   2 RGBD, Lucid via Aravis instead of Arena SDK. Not yet tested against real
   RealSense hardware end-to-end (RGBD path is `pyrealsense2`, unchanged from
@@ -23,6 +28,26 @@
   end-to-end with all 5 real cameras.
 
 **Use `_macos` scripts on the MacBook. Use the originals on Windows/Linux.**
+
+## Windows
+
+```bash
+pip install pypylon pyrealsense2
+# Lucid: install the Arena SDK + arena_api Python wheel from Lucid's website
+python record_basler_lucid_rgbd.py --fps 15 --duration 90
+python record_basler_lucid_rgbd.py --fps 15 --duration 90 --max-rgbd 1
+```
+
+No `sudo`/admin needed — the macOS RealSense USB permission problem
+(see Known Issues 1) is macOS-specific.
+
+`--max-rgbd 1` excludes one RGBD unit; use it when a camera is being removed
+from the rig, or when one is in a bad USB state and destabilising the others.
+
+The two RealSense units in this rig interfere with each other at device-open
+time when they share a USB controller — see Known Issues 2. If that shows up on
+Windows too, `--max-rgbd 1` is the workaround, and putting the cameras on
+separate controllers is the fix.
 
 ## One-time environment setup (macOS, `ams` conda env)
 
@@ -139,19 +164,63 @@ needed — a single combined 5-camera `sudo` run is the supported path.
 
 ### 2. RealSense: two cameras, second one fails to start
 
-Known upstream librealsense/macOS bug ("failed to set power state" or "UVC
-device is already opened!"), especially over a shared USB hub. Mitigated in
+Known upstream librealsense/macOS bug ("failed to set power state", "No device
+connected", or "UVC device is already opened!"). Mitigated in
 `record_real_sense_dual.py` and `record_all_5_cameras_macos.py`'s `RGBDWorker`
-with a retry loop (4 attempts, fresh `pipeline`/`config` each time, 2s+
-backoff) — this helps with the intermittent timing version of the bug, but
-if the two cameras share a hub, separate USB ports (or a powered hub) is the
-more fundamental fix. **Still open**: confirm whether both RealSense cameras
-are on the same hub or separate direct ports.
+with a retry loop (4 attempts, fresh `pipeline`/`config` each time), but
+**never fully solved — treat 2x RealSense as unreliable on this rig.**
 
-If a run gets interrupted (`Ctrl+C`) partway through RealSense initialization,
-the USB device can get stuck in a bad state — **physically unplug and replug**
-both RealSense cables before the next attempt if you see immediate failures
-even on the first camera.
+**Confirmed 2026-07-27: both cameras are on the SAME USB controller**
+(`system_profiler SPUSBDataType` Location IDs `0x01210000` and `0x01220000`).
+
+**It is contention at device-open time, not bandwidth.** Measured across two
+runs 25 minutes apart:
+
+| depth stream | result |
+|---|---|
+| 1280x720 | RGBD_2 recorded 152 frames, RGBD_1 failed |
+| 848x480 (~31 MB/s less) | **both** failed |
+
+Reducing bandwidth made it worse, so the bandwidth theory is wrong. What the
+logs show instead: one camera's `pipeline.start()` retry loop runs while the
+other is in its 30-frame warmup, and the warming camera dies with "Frame didn't
+arrive within 5000". Corroborating evidence: `reset_realsense.py --skip-reset`
+passes **both** cameras every time, because it opens them *sequentially* — they
+only fail when opened concurrently.
+
+Workarounds, in order of preference:
+1. `--max-realsense 1` (macOS) / `--max-rgbd 1` (Windows) — guarantees a clean
+   4-camera take. Losing one RGBD stream beats losing the session.
+2. Put the two cameras on **separate USB controllers**. This is the real fix.
+3. Run RealSense in a separate process from the GigE cameras, so neither
+   contention nor a libusb segfault can affect Basler/Lucid. Not implemented.
+
+### 2b. RealSense wedges after any unclean exit
+
+`kill -9`, `Ctrl+Z`, or a libusb SIGSEGV leaves the D435s wedged: subsequent
+runs report "failed to set power state" or "No device connected" **even as
+root**. Use the recovery tool instead of replugging cables:
+
+```bash
+sudo /opt/anaconda3/envs/ams/bin/python reset_realsense.py
+sudo /opt/anaconda3/envs/ams/bin/python reset_realsense.py --skip-reset  # check only
+```
+
+It sends `hardware_reset()` (firmware reboot), waits for re-enumeration, then
+starts a stream on each camera to prove it actually works — enumeration alone
+is not proof, since the failure occurs at `pipeline.start()`.
+
+Two traps that script had to learn, both of which produced false "camera is
+broken" verdicts on healthy hardware:
+- **Re-enumerating is not being ready.** Streaming ~2s after the devices
+  re-appear fails; the firmware needs several more seconds (`--settle`).
+- **Use one shared `rs.context()`**, passed to `rs.pipeline(ctx)`. With a fresh
+  context per operation, devices enumerate fine in one context while a pipeline
+  on another reports "No device connected" for the same serial.
+
+**Prevention**: `Ctrl+C` once and let the `finally` blocks release the
+pipelines. Never `Ctrl+Z` — suspending holds the cameras claimed, which is what
+produces "No device connected" on the next run.
 
 ## Network requirement
 

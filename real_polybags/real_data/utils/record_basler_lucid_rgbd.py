@@ -1,3 +1,40 @@
+"""
+Synchronized multi-camera recorder for WINDOWS: 2x Basler (pypylon) +
+1x Lucid (Arena SDK) + up to 2x RGBD (RealSense, with Azure Kinect and generic
+OpenCV fallbacks).
+
+This is the Windows counterpart to `record_all_5_cameras_macos.py`. The two
+differ only in how Lucid is driven: Arena SDK (`arena_api`) here, Aravis on
+macOS, because Arena SDK has no macOS build. Windows also needs no `sudo` for
+RealSense, unlike macOS.
+
+Usage:
+    python record_basler_lucid_rgbd.py --fps 15 --duration 90
+    python record_basler_lucid_rgbd.py --max-rgbd 1     # exclude one RGBD unit
+
+Synchronization: each camera connects independently and reports `setup_done`
+(success or failure), then waits on a shared `go_event` that the coordinator
+sets once the setup phase concludes. Cameras that fail to connect are dropped
+and the rest still record.
+
+This replaced a `threading.Barrier(len(workers))`, which required every worker
+to arrive — so one camera failing to connect raised BrokenBarrierError for all
+the others and lost the entire recording. With flaky RealSense units on a
+shared USB controller that happened routinely.
+
+Two failure modes worth knowing about, both found on the macOS side and fixed
+here too:
+  - A worker's go-wait timeout must stay LARGER than the coordinator's setup
+    budget. When both were 35s, workers (whose countdown starts earlier, at
+    their own ready moment) expired first and exited having recorded nothing —
+    producing a run that announced "4/5 cameras ready" and then wrote five
+    header-only AVI files.
+  - `elapsed()` must freeze when capture stops, or the end-of-run summary
+    under-reports fps: the clock keeps running through teardown while
+    frame_count stays fixed.
+"""
+
+import argparse
 import cv2
 import numpy as np
 from datetime import datetime
@@ -60,10 +97,45 @@ class CameraWorker:
         self.lock         = threading.Lock()
         self.error        = None
         self.start_time   = None
-        self.barrier      = None
+        self.end_time     = None   # set on capture-loop exit; freezes elapsed()
+        # Setup and the synchronized start are decoupled: each worker reports
+        # setup_done (success or failure) independently, then waits on a shared
+        # go_event. This replaces a threading.Barrier(len(workers)), which
+        # required EVERY worker to arrive — so a single camera that failed to
+        # connect raised BrokenBarrierError for all the others and took the
+        # whole recording down. That is not hypothetical: the RealSense units
+        # in this rig fail to connect regularly.
+        self.setup_done   = threading.Event()
+        self.setup_ok     = False
+        self.go_event     = None
+        # Safety net only; the coordinator is expected to always signal.
+        # MUST stay larger than the coordinator's total setup budget — a worker
+        # whose go-wait expires before the coordinator has decided exits having
+        # recorded nothing despite having connected fine. See set_go_event().
+        self.go_timeout   = 300.0
 
-    def set_barrier(self, barrier):
-        self.barrier = barrier
+    def set_go_event(self, go_event, go_timeout=None):
+        self.go_event = go_event
+        if go_timeout is not None:
+            self.go_timeout = go_timeout
+
+    def mark_ready(self, ok):
+        if not self.setup_done.is_set():
+            self.setup_ok = ok
+            self.setup_done.set()
+
+    def wait_for_go(self, timeout=None):
+        """Call after setup succeeds. Returns False if the go signal never
+        arrives (e.g. another camera's setup took too long)."""
+        self.mark_ready(True)
+        if self.go_event is None:
+            return True
+        return self.go_event.wait(
+            timeout=self.go_timeout if timeout is None else timeout)
+
+    def mark_finished(self):
+        if self.end_time is None:
+            self.end_time = time.time()
 
     def start(self):
         self.running = True
@@ -97,7 +169,21 @@ class CameraWorker:
             return self.latest_frame.copy() if self.latest_frame is not None else None
 
     def elapsed(self):
-        return time.time() - self.start_time if self.start_time else 0
+        """Seconds spent recording. Freezes once the worker stops.
+
+        Using a live time.time() here meant the clock kept running after the
+        capture loop exited while frame_count stayed fixed, and the summary
+        prints after teardown and thread joins — so every camera's fps was
+        reported meaningfully lower there than it actually was (a camera that
+        hit 14.9 fps was summarised as 12.6).
+        """
+        if not self.start_time:
+            return 0
+        end = self.end_time if self.end_time else time.time()
+        return end - self.start_time
+
+    def actual_fps(self):
+        return self.frame_count / max(self.elapsed(), 0.001)
 
     def release(self):
         if self.out:
@@ -172,9 +258,11 @@ class RGBDWorker(CameraWorker):
                 self._run_opencv()
         except Exception as e:
             self.error = str(e)
+            self.mark_ready(False)
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             self.release()
             print(f"[{self.name}] Done | Frames: {self.frame_count} | "
                   f"Incomplete: {self.incomplete}")
@@ -210,8 +298,9 @@ class RGBDWorker(CameraWorker):
         self._init_depth_writer()
         print(f"[{self.name}] Ready — waiting for sync...")
 
-        if self.barrier:
-            self.barrier.wait(timeout=30)
+        if not self.wait_for_go():
+            print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+            return
 
         self.start_time = time.time()
         print(f"[{self.name}] Recording → {self.output_file}")
@@ -259,8 +348,9 @@ class RGBDWorker(CameraWorker):
         self._init_depth_writer()
         print(f"[{self.name}] Ready — waiting for sync...")
 
-        if self.barrier:
-            self.barrier.wait(timeout=30)
+        if not self.wait_for_go():
+            print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+            return
 
         self.start_time = time.time()
         print(f"[{self.name}] Recording → {self.output_file}")
@@ -305,8 +395,9 @@ class RGBDWorker(CameraWorker):
         self._init_writer()
         print(f"[{self.name}] OpenCV VideoCapture({self.index}) ready — waiting for sync...")
 
-        if self.barrier:
-            self.barrier.wait(timeout=30)
+        if not self.wait_for_go():
+            print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+            return
 
         self.start_time = time.time()
         print(f"[{self.name}] Recording → {self.output_file}")
@@ -414,11 +505,12 @@ class BaslerWorker(CameraWorker):
             self._init_writer()
             print(f"[{self.name}] Ready — waiting for sync...")
 
-            # ── Barrier ──────────────────────────────────────────────────
-            if self.barrier:
-                self.barrier.wait(timeout=30)
+            # ── Wait for the shared go signal ────────────────────────────
+            if not self.wait_for_go():
+                print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+                return
 
-            # ── Start AFTER barrier ───────────────────────────────────────
+            # ── Start AFTER the go signal ────────────────────────────────
             self.start_time = time.time()
             camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
             print(f"[{self.name}] Recording → {self.output_file}")
@@ -458,9 +550,11 @@ class BaslerWorker(CameraWorker):
 
         except Exception as e:
             self.error = str(e)
+            self.mark_ready(False)
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             if camera and camera.IsOpen():
                 camera.StopGrabbing()
                 camera.Close()
@@ -581,8 +675,9 @@ class LucidWorker(CameraWorker):
 
             self._init_writer()
 
-            if self.barrier:
-                self.barrier.wait(timeout=30)
+            if not self.wait_for_go():
+                print(f"[{self.name}] Timed out waiting for other cameras — skipping")
+                return
 
             # Drain stale pre-barrier frames
             drain_until = time.time() + 0.5
@@ -637,9 +732,11 @@ class LucidWorker(CameraWorker):
 
         except Exception as e:
             self.error = str(e)
+            self.mark_ready(False)
             print(f"[{self.name}] ERROR: {e}")
             import traceback; traceback.print_exc()
         finally:
+            self.mark_finished()   # freeze the fps clock before teardown
             try:
                 device.stop_stream()
                 self.arena_system.destroy_device(device)
@@ -758,14 +855,14 @@ def display_loop(workers, duration):
 # ─────────────────────────────────────────────────────────────────────────────
 # RGBD device discovery helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def _find_rgbd_backends():
+def _find_rgbd_backends(max_rgbd=2):
     """
     Returns a list of dicts:
       {'backend': 'realsense'|'kinect'|'opencv', 'index': int, 'label': str}
-    up to MAX_RGBD devices.
+    up to max_rgbd devices.
     Priority: RealSense > Kinect > OpenCV.
     """
-    MAX_RGBD = 2
+    MAX_RGBD = max_rgbd
     found    = []
 
     # 1. Intel RealSense
@@ -818,7 +915,8 @@ def _find_rgbd_backends():
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
-def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
+def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
+                       max_rgbd=2):
     """
     Records simultaneously from:
       • Up to 2 RGBD cameras  (RealSense / Azure Kinect / OpenCV fallback)
@@ -836,7 +934,7 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
 
     # ── 1. RGBD cameras ──────────────────────────────────────────────────────
     print("\n=== Enumerating RGBD cameras ===")
-    rgbd_devs = _find_rgbd_backends()
+    rgbd_devs = _find_rgbd_backends(max_rgbd=max_rgbd)
     print(f"Found {len(rgbd_devs)} RGBD device(s)")
 
     for i, dev in enumerate(rgbd_devs, start=1):
@@ -915,20 +1013,50 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
         print("ERROR: No cameras found!")
         return
 
-    # ── Barrier ───────────────────────────────────────────────────────────────
-    barrier = threading.Barrier(len(workers))
+    # ── Synchronized start ────────────────────────────────────────────────────
+    # One wall-clock budget for the whole setup phase, shared across cameras.
+    # Workers get a go-wait timeout derived from it so they cannot expire before
+    # this thread has decided whether to start — if they do, a camera that
+    # connected perfectly still records zero frames.
+    SETUP_BUDGET = 45.0
+
+    go_event = threading.Event()
     for w in workers:
-        w.set_barrier(barrier)
+        w.set_go_event(go_event, go_timeout=SETUP_BUDGET + 60.0)
 
     print(f"\nAll {len(workers)} cameras pre-initialized.")
-    print(f"Starting simultaneous recording for {duration_seconds}s...\n")
+    print(f"Connecting, then recording for {duration_seconds}s...\n")
 
     for w in workers:
         w.running = True
         w.thread  = threading.Thread(target=w._run, daemon=True)
         w.thread.start()
 
-    display_loop(workers, duration_seconds)
+    print(f"Waiting for all cameras to finish setup "
+          f"({SETUP_BUDGET:.0f}s total budget)...")
+    setup_deadline = time.time() + SETUP_BUDGET
+    for w in workers:
+        remaining = max(0.0, setup_deadline - time.time())
+        if not w.setup_done.wait(timeout=remaining):
+            print(f"[{w.name}] setup did not report back in time — treating as failed")
+            w.mark_ready(False)
+
+    ready_workers  = [w for w in workers if w.setup_ok]
+    failed_workers = [w for w in workers if not w.setup_ok]
+
+    if failed_workers:
+        print(f"\nWARNING: {len(failed_workers)} camera(s) failed setup and will be "
+              f"skipped: {[w.name for w in failed_workers]}")
+    if not ready_workers:
+        print("ERROR: no cameras successfully initialized — aborting")
+        go_event.set()  # unblock any worker still parked in wait_for_go()
+        return
+
+    print(f"{len(ready_workers)}/{len(workers)} camera(s) ready — "
+          f"starting synchronized recording for {duration_seconds}s...\n")
+    go_event.set()
+
+    display_loop(ready_workers, duration_seconds)
 
     for w in workers:
         w.stop()
@@ -938,21 +1066,34 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15):
     print(f"\n{'='*60}")
     print("All recordings complete!")
     for w in workers:
-        fps_actual = w.frame_count / max(w.elapsed(), 0.001)
         extra = ""
         if isinstance(w, RGBDWorker) and w.depth_file:
             extra = f"  depth→ {w.depth_file}"
         print(f"  {w.name:12} | {w.frame_count:5} frames | "
-              f"{fps_actual:.1f} fps | {w.incomplete} incomplete | "
+              f"{w.actual_fps():.1f} fps | {w.incomplete} incomplete | "
               f"{w.output_file}{extra}")
     print(f"{'='*60}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    ap = argparse.ArgumentParser(
+        description="Synchronized multi-camera recorder for Windows "
+                    "(Basler via pypylon + Lucid via Arena SDK + RGBD)")
+    ap.add_argument('--fps', type=float, default=15.0, help="Target FPS for ALL cameras")
+    ap.add_argument('--duration', type=int, default=90, help="Recording duration in seconds")
+    ap.add_argument('--width', type=int, default=1280)
+    ap.add_argument('--height', type=int, default=720)
+    ap.add_argument('--max-rgbd', type=int, default=2,
+                    help="How many RGBD (RealSense/Kinect) cameras to use, default 2. "
+                         "Set to 1 or 0 to exclude a camera that is being removed from "
+                         "the rig or is in a bad USB state.")
+    args = ap.parse_args()
+
     record_all_cameras(
-        duration_seconds=50,
-        width=1280,
-        height=720,
-        fps=5       
+        duration_seconds=args.duration,
+        width=args.width,
+        height=args.height,
+        fps=args.fps,
+        max_rgbd=args.max_rgbd,
     )
