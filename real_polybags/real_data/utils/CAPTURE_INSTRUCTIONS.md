@@ -251,6 +251,47 @@ times) and `recording_metadata_<run>.json` (measured fps, playback speed error,
 pacing drift). **Use those for any temporal analysis, not the video timebase.**
 The end-of-run summary flags any camera off by more than 5%.
 
+The CSV carries two clocks per frame, because neither alone is enough:
+
+| column | meaning |
+|---|---|
+| `host_unix_time` | host clock, sampled after transfer + conversion. Shared across cameras (one host records all), but carries per-camera latency. |
+| `device_timestamp` | the camera's own timestamp. Precise, but on that camera's private clock and in SDK-specific units. |
+| `device_delta` | device timestamp relative to that camera's first frame — readable without knowing the tick rate. |
+
+`timestamp_domain` in the metadata JSON says how to interpret
+`device_timestamp`: `aravis_device_ns` (nanoseconds), `basler_device_ticks`
+(model-dependent rate, and it changes if PTP is enabled), `arena_device_ns`, or
+a librealsense domain such as `global_time`. Units are recorded verbatim rather
+than normalised, because converting blindly would silently produce wrong
+numbers.
+
+Pairing the two clocks is what makes ~10–30 ms cross-camera alignment possible
+without PTP hardware: the device clock supplies precision, the host clock a
+common origin.
+
+### 3b. Measuring how well-synchronized the cameras actually are
+
+```bash
+cd raw_recordings
+python3 ../utils/measure_sync.py                 # newest run
+python3 ../utils/measure_sync.py --json skew.json
+```
+
+Reports per-camera pacing, cross-camera skew (p95 and worst-case), and
+device-vs-host clock drift in ppm.
+
+**Run this before buying any synchronization hardware.** The key column is
+`floor` = 1/(2·fps): the closest a camera can be to an arbitrary instant purely
+because of its frame rate. If measured skew is already at that floor, the
+cameras are as aligned as their frame rates permit and a PTP switch would change
+nothing — the fix is a higher frame rate (issue 4 below). The tool states this
+verdict explicitly rather than leaving it to be inferred.
+
+A drift figure above ~100 ppm is worth attention: over a 90 s run that is ~9 ms
+of accumulated error, the same order as the skew being measured. Drift is
+correctable in software; it does not require hardware either.
+
 To correct existing files (lossless container remux, keeps `.orig.avi`):
 
 ```bash

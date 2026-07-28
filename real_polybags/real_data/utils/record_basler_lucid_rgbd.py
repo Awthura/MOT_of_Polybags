@@ -99,7 +99,13 @@ class CameraWorker:
         self.error        = None
         self.start_time   = None
         self.end_time     = None   # set on capture-loop exit; freezes elapsed()
-        self.frame_times  = []     # wall-clock capture time per written frame
+        self.frame_times  = []     # host wall-clock time per written frame
+        self.device_times = []     # camera's own timestamp per frame (may be None)
+        # Unit/epoch of device_times, set by each worker once known. Recorded
+        # verbatim rather than normalised: pylon reports model-dependent device
+        # ticks, Arena reports nanoseconds, librealsense reports milliseconds in
+        # one of several domains. Downstream is told the domain and converts.
+        self.ts_domain    = None
         # Setup and the synchronized start are decoupled: each worker reports
         # setup_done (success or failure) independently, then waits on a shared
         # go_event. This replaces a threading.Barrier(len(workers)), which
@@ -159,16 +165,23 @@ class CameraWorker:
         if not self.out.isOpened():
             raise RuntimeError(f"Could not open VideoWriter: {self.output_file}")
 
-    def _write_frame(self, frame):
+    def _write_frame(self, frame, device_ts=None):
+        """Write a frame and record when it was captured.
+
+        Two clocks per frame, because neither alone suffices. The host clock
+        (time.time()) is sampled here — AFTER transfer and conversion — so it
+        carries per-camera, per-frame latency, but it IS shared across cameras
+        since one host records them all. `device_ts` is the camera's own
+        timestamp: precise, but on that camera's private clock.
+
+        Pairing them is what makes ~10-30ms cross-camera alignment possible
+        without PTP — device clock for precision, host clock for a common
+        origin. Both go to timestamps_<camera>_<run>.csv.
+        """
         if frame is not None and frame.size > 0:
             self.out.write(frame)
-            # Capture-time timestamp per frame. The AVI header carries a single
-            # fixed fps (the *target*), so a camera running below target yields
-            # a file that plays back too fast — measured on macOS, Lucid wrote
-            # 85 frames of a 10s event, which at a 15fps header replays in 5.7s
-            # (1.76x). Frame index is therefore NOT proportional to time, which
-            # matters for velocity, cross-camera alignment and MOT.
             self.frame_times.append(time.time())
+            self.device_times.append(device_ts)
             self.frame_count += 1
             with self.lock:
                 self.latest_frame = frame.copy()
@@ -307,7 +320,20 @@ class RGBDWorker(CameraWorker):
         dev_name = profile.get_device().get_info(rs.camera_info.name)
         print(f"[{self.name}] RealSense connected: {dev_name} (S/N: {serial})")
 
-        # Warm-up frames — discard before barrier
+        # Ask librealsense to report frame timestamps already mapped onto the
+        # host clock (GLOBAL_TIME domain). This is the only camera on the rig
+        # that can do the device->host clock mapping itself; without it
+        # timestamps come back on HARDWARE_CLOCK, an arbitrary device epoch that
+        # cannot be compared with anything else.
+        try:
+            for s in profile.get_device().query_sensors():
+                if s.supports(rs.option.global_time_enabled):
+                    s.set_option(rs.option.global_time_enabled, 1)
+            print(f"[{self.name}] global_time enabled (device clock mapped to host)")
+        except Exception as e:
+            print(f"[{self.name}] could not enable global_time: {e}")
+
+        # Warm-up frames — discard before the go signal
         for _ in range(30):
             pipeline.wait_for_frames()
 
@@ -335,10 +361,17 @@ class RGBDWorker(CameraWorker):
                     self.incomplete += 1
                     continue
 
+                try:
+                    dev_ts = color_frame.get_timestamp()   # ms
+                    if self.ts_domain is None:
+                        self.ts_domain = str(color_frame.get_frame_timestamp_domain())
+                except Exception:
+                    dev_ts = None
+
                 color = np.asanyarray(color_frame.get_data())
                 depth = np.asanyarray(depth_frame.get_data())   # uint16, mm
 
-                self._write_frame(color)
+                self._write_frame(color, device_ts=dev_ts)
                 self._write_depth(depth)
         finally:
             pipeline.stop()
@@ -390,6 +423,9 @@ class RGBDWorker(CameraWorker):
                    (depth.shape[1] != self.width or depth.shape[0] != self.height):
                     depth = cv2.resize(depth, (self.width, self.height),
                                        interpolation=cv2.INTER_NEAREST)
+                # No device_ts: the Kinect fallback backend is unused on this
+                # rig (RealSense is the RGBD source), so its timestamp path is
+                # deliberately not wired rather than guessed at untested.
                 self._write_frame(color)
                 self._write_depth(depth)
         finally:
@@ -430,6 +466,8 @@ class RGBDWorker(CameraWorker):
                     continue
                 if frame.shape[1] != self.width or frame.shape[0] != self.height:
                     frame = cv2.resize(frame, (self.width, self.height))
+                # No device_ts: generic OpenCV VideoCapture exposes no
+                # reliable device clock. Unused fallback backend.
                 self._write_frame(frame)
         finally:
             cap.release()
@@ -544,11 +582,20 @@ class BaslerWorker(CameraWorker):
                     grab.Release()
                     continue
 
+                # Device timestamp must be read BEFORE Release() — the grab
+                # result returns to the pool there.
+                try:
+                    dev_ts = grab.TimeStamp
+                    if self.ts_domain is None:
+                        self.ts_domain = "basler_device_ticks"
+                except Exception:
+                    dev_ts = None
+
                 # Always convert so Bayer demosaicing + WB ratios are applied
                 converted = converter.Convert(grab)
                 frame = converted.Array
                 grab.Release()
-                self._write_frame(frame)
+                self._write_frame(frame, device_ts=dev_ts)
 
                 # Lock WB after 1 second — ratios have converged by then
                 if not wb_locked and self.elapsed() >= 1.0:
@@ -769,6 +816,20 @@ class LucidWorker(CameraWorker):
                     continue
 
                 try:
+                    # Read the device timestamp while we still hold the buffer;
+                    # requeue_buffer() below returns it to the driver pool.
+                    try:
+                        dev_ts = buffer.timestamp_ns
+                        if self.ts_domain is None:
+                            self.ts_domain = "arena_device_ns"
+                    except Exception:
+                        try:
+                            dev_ts = buffer.timestamp
+                            if self.ts_domain is None:
+                                self.ts_domain = "arena_device_ticks"
+                        except Exception:
+                            dev_ts = None
+
                     pdata = ctypes.cast(buffer.pdata,
                                         ctypes.POINTER(ctypes.c_ubyte))
                     arr   = np.ctypeslib.as_array(
@@ -783,7 +844,7 @@ class LucidWorker(CameraWorker):
                     continue
 
                 device.requeue_buffer(buffer)
-                self._write_frame(frame)
+                self._write_frame(frame, device_ts=dev_ts)
                 if self.frame_count in (1, 10, 50) or self.frame_count % 100 == 0:
                     print(f"[{self.name}] frame #{self.frame_count} written "
                           f"({self.elapsed():.1f}s elapsed)")
@@ -1159,12 +1220,24 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
             "max_pacing_drift_s": (round(drift, 4) if drift is not None else None),
             "error": w.error,
         }
+        meta["cameras"][w.name]["timestamp_domain"] = w.ts_domain
+        meta["cameras"][w.name]["device_timestamps_present"] = bool(
+            [d for d in w.device_times if d is not None])
         if ts:
             ts_file = f"timestamps_{w.name}_{timestamp}.csv"
+            dev = w.device_times
             with open(ts_file, "w") as f:
-                f.write("frame_index,unix_time,seconds_from_start\n")
+                f.write("frame_index,host_unix_time,host_seconds_from_start,"
+                        "device_timestamp,device_delta\n")
+                d0 = next((d for d in dev if d is not None), None)
                 for i, t in enumerate(ts):
-                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f}\n")
+                    d = dev[i] if i < len(dev) else None
+                    # device_delta is relative to this camera's own first frame,
+                    # readable without knowing the tick rate or epoch. The
+                    # absolute value is kept verbatim so nothing is lost.
+                    dd = "" if (d is None or d0 is None) else f"{d - d0}"
+                    ds = "" if d is None else f"{d}"
+                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f},{ds},{dd}\n")
             meta["cameras"][w.name]["timestamps_file"] = ts_file
 
     meta_file = f"recording_metadata_{timestamp}.json"
