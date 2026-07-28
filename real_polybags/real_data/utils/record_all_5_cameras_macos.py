@@ -1,6 +1,12 @@
 """
-Combined 5-camera recorder for macOS: 2x Basler (pypylon) + 1x Lucid (Aravis,
-not Arena SDK — no macOS support there) + 2x RealSense RGBD (pyrealsense2).
+Combined multi-camera recorder for macOS: 2x Basler (pypylon) + 1x Lucid
+(Aravis, not Arena SDK — no macOS support there) + RealSense RGBD
+(pyrealsense2).
+
+Defaults to a 4-camera rig (2 Basler + 1 Lucid + 1 RGBD), matching the current
+hardware after one RealSense was removed. Pass --max-realsense 2 if a second
+unit is refitted, but see CAPTURE_INSTRUCTIONS.md issue 2 first: the two D435s
+interfere at device-open time on a shared USB controller.
 
 Each camera connects/configures itself independently, then reports success or
 failure before waiting on a shared "go" event — a camera that fails to
@@ -748,8 +754,18 @@ class RGBDWorker(CameraWorker):
 # Display
 # ─────────────────────────────────────────────────────────────────────────────
 def display_loop(workers, duration, verbose):
-    PREVIEW_W, PREVIEW_H, COLS = 480, 270, 3
+    # Grid sized to the actual camera count rather than a fixed 3 columns, so
+    # no blank padding tiles appear. With the rig now at 4 cameras (2 Basler +
+    # 1 Lucid + 1 RGBD) a fixed 3-column layout padded to 6 tiles, i.e. two
+    # dead black panels. Near-square: 1->1x1, 2->2x1, 4->2x2 exactly,
+    # 5->3x2 (one blank), 6->3x2 exact.
+    import math
+    PREVIEW_W, PREVIEW_H = 480, 270
     EXP_STEP = 0.20
+
+    N    = max(len(workers), 1)
+    COLS = math.ceil(math.sqrt(N))
+    ROWS = math.ceil(N / COLS)
 
     lucid_worker = next((w for w in workers if isinstance(w, LucidWorker)), None)
     last_good    = {w.name: None for w in workers}
@@ -759,7 +775,7 @@ def display_loop(workers, duration, verbose):
     while True:
         if all(w.start_time is not None or w.error is not None for w in workers):
             break
-        waiting = np.full((PREVIEW_H * 2, PREVIEW_W * COLS, 3), 30, dtype=np.uint8)
+        waiting = np.full((PREVIEW_H * ROWS, PREVIEW_W * COLS, 3), 30, dtype=np.uint8)
         cv2.putText(waiting, "Waiting for cameras...", (10, PREVIEW_H),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
         cv2.imshow('5-Camera Recording  |  Q=stop  +/-=Lucid exposure', waiting)
@@ -837,7 +853,7 @@ def display_loop(workers, duration, verbose):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 def record_all_cameras(duration_seconds, width, height, fps, verbose,
-                       max_realsense=2, depth_width=None, depth_height=None,
+                       max_realsense=1, depth_width=None, depth_height=None,
                        lucid_packet_size=1400, lucid_packet_delay=40000):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     workers   = []
@@ -1051,11 +1067,14 @@ if __name__ == '__main__':
     ap.add_argument('--width', type=int, default=1280)
     ap.add_argument('--height', type=int, default=720)
     ap.add_argument('--verbose', action='store_true', help="Print per-camera actual FPS every 5s")
-    ap.add_argument('--max-realsense', type=int, default=2, choices=(0, 1, 2),
-                    help="How many RealSense cameras to use (default 2). Drop to 1 "
-                         "or 0 if one of them is in a bad USB state and crashes the "
-                         "process — a libusb SIGSEGV cannot be caught and would "
-                         "otherwise take the Basler/Lucid cameras down too.")
+    ap.add_argument('--max-realsense', type=int, default=1, choices=(0, 1, 2),
+                    help="How many RealSense cameras to use (default 1, matching the "
+                         "current 4-camera rig: 2 Basler + 1 Lucid + 1 RGBD). Raise to "
+                         "2 only if a second unit is refitted — note the two D435s "
+                         "interfere at device-open time on a shared USB controller "
+                         "(see CAPTURE_INSTRUCTIONS.md issue 2), and a wedged unit can "
+                         "SIGSEGV inside libusb, which cannot be caught from Python "
+                         "and takes the Basler/Lucid cameras down with it.")
     ap.add_argument('--depth-width', type=int, default=None,
                     help="Depth STREAM width (default: same as --width). Independent "
                          "of --width because depth is aligned to the colour stream, so "

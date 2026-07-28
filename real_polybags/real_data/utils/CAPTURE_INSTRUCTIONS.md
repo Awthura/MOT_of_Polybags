@@ -35,11 +35,28 @@
 pip install pypylon pyrealsense2
 # Lucid: install the Arena SDK + arena_api Python wheel from Lucid's website
 python record_basler_lucid_rgbd.py --fps 15 --duration 90
-python record_basler_lucid_rgbd.py --fps 15 --duration 90 --max-rgbd 1
 ```
 
-Feature parity with the macOS script as of 2026-07-27: resilient sync,
-frozen fps clock, per-frame timestamps + `recording_metadata_*.json`,
+**Confirmed working on Windows against all 4 cameras (2026-07-28.)**
+
+Both scripts now default to the **4-camera rig** — 2 Basler + 1 Lucid + 1 RGBD
+— after one RealSense was removed from the mount. Raise `--max-rgbd` (Windows)
+or `--max-realsense` (macOS) to 2 only if a second unit is refitted, and read
+issue 2 first.
+
+Two behaviours worth knowing:
+
+- **A generic USB/laptop webcam will NOT be used as an RGBD camera** unless you
+  pass `--allow-webcam-fallback`. The fallback exists for RGBD-ish devices that
+  only appear as generic UVC (e.g. Orbbec), but on a fixed rig it silently
+  masked a real failure: if the D435 failed to enumerate, a webcam quietly took
+  its slot and the run looked successful. Off by default, so that slot is now
+  reported as failed instead.
+- **The preview grid is sized to the camera count** (near-square) rather than a
+  fixed 3 columns, so 4 cameras tile 2x2 with no dead panels.
+
+Feature parity with the macOS script: resilient sync, frozen fps clock,
+per-frame host + device timestamps, `recording_metadata_*.json`,
 playback-speed warnings, and `--lucid-packet-size`/`--lucid-packet-delay`/
 `--depth-width`/`--depth-height` tuning.
 
