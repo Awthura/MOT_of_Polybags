@@ -94,3 +94,15 @@ build/
 .idea/
 *.swp
 *.swo
+
+# Calibration boards — these are DELIVERABLES, not generated clutter. The exact
+# printed geometry must stay recoverable: a board whose square size or
+# dictionary is unknown afterwards is scrap, and reprinting a differently-sized
+# board silently invalidates every metric result derived from the old one.
+# Overrides the blanket *.png / *.pdf rules above.
+!real_polybags/calibration/boards/*.pdf
+!real_polybags/calibration/boards/*.png
+!real_polybags/calibration/boards/*.json
+
+# Local editor/agent settings backups
+.claude/settings.local.json.bak
