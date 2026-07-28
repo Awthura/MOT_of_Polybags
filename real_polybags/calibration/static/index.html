@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OVGU AMS — Camera Calibration</title>
+<link rel="stylesheet" href="ams.css">
+</head>
+<body>
+
+<header>
+  <div class="mark">AMS</div>
+  <div>
+    <h1>Camera Calibration</h1>
+    <div style="font-size:12px;opacity:.85">OVGU · Chair of Automation / Manufacturing Systems</div>
+  </div>
+  <div class="sub" id="hdr-status">no session</div>
+</header>
+
+<main>
+
+  <!-- 1 · Setup -->
+  <section class="panel">
+    <h2><span class="step">1</span> Setup</h2>
+    <div class="row">
+      <div class="field">
+        <label for="camera">Camera name</label>
+        <input id="camera" value="basler_1" size="16">
+      </div>
+      <div class="field">
+        <label for="source">Frame source</label>
+        <select id="source"></select>
+      </div>
+      <div class="field" id="folder-field" style="display:none">
+        <label for="folder">Image folder</label>
+        <input id="folder" size="34" placeholder="/path/to/captures">
+      </div>
+      <div class="field">
+        <label for="board">Board</label>
+        <select id="board"></select>
+      </div>
+      <button id="btn-start" class="accent">Start session</button>
+    </div>
+    <div class="note" id="source-note"></div>
+  </section>
+
+  <!-- 2 · Capture -->
+  <section class="panel hidden" id="sec-capture">
+    <h2><span class="step">2</span> Capture — intrinsics</h2>
+    <div class="split">
+      <div>
+        <div id="viewport">
+          <img id="stream" alt="camera preview">
+          <div id="marker"></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="btn-capture" class="accent">Capture shot</button>
+          <button id="btn-calibrate" disabled>Calibrate intrinsics</button>
+          <span id="cap-hint" class="note" style="margin:0"></span>
+        </div>
+        <div class="shots" id="shots"></div>
+      </div>
+
+      <div>
+        <strong style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-dim)">
+          Frame coverage
+        </strong>
+        <div class="cov-grid" id="cov-grid" style="margin:8px 0"></div>
+        <div class="stat"><span class="k">shots</span><span class="v" id="cov-shots">0</span></div>
+        <div class="stat"><span class="k">regions</span><span class="v" id="cov-seen">0/16</span></div>
+        <p class="note" id="cov-advice"></p>
+        <p class="note">
+          Coverage and <em>tilt</em> decide calibration quality, not the error
+          number. A set of flat-on shots at one distance yields a low
+          reprojection error and a badly wrong focal length — measured at 57%
+          off in testing. Tilt the board 20–45°, and push it into the frame
+          edges where distortion lives.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 · Results -->
+  <section class="panel hidden" id="sec-results">
+    <h2><span class="step">3</span> Intrinsics result</h2>
+    <div class="split">
+      <pre class="report" id="report"></pre>
+      <div>
+        <div id="truth-box" class="hidden">
+          <strong style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-dim)">
+            vs known reference
+          </strong>
+          <div id="truth-stats" style="margin-top:6px"></div>
+          <p class="note">
+            The reference is either the synthetic camera's true parameters or
+            the RealSense factory intrinsics. It is the only way to tell a
+            correct calibration from a merely plausible one.
+          </p>
+        </div>
+        <ul class="warnings" id="warnings"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 · Belt plane -->
+  <section class="panel hidden" id="sec-belt">
+    <h2><span class="step">4</span> Belt plane — extrinsics</h2>
+    <p class="note" style="margin-top:0">
+      Lay the board <strong>flat on the belt</strong> with it visible in the
+      preview above, then solve. This fixes the camera's pose relative to the
+      belt, which becomes the shared metric frame all cameras map into.
+      Use the origin offset when the board sits at a measured position away from
+      the belt origin — that is what ties cameras together without needing them
+      to share a view.
+    </p>
+    <div class="row">
+      <div class="field">
+        <label for="ox">Origin offset X (mm)</label>
+        <input id="ox" type="number" value="0" step="1" size="8">
+      </div>
+      <div class="field">
+        <label for="oy">Origin offset Y (mm)</label>
+        <input id="oy" type="number" value="0" step="1" size="8">
+      </div>
+      <button id="btn-extr">Solve extrinsics</button>
+    </div>
+    <div id="extr-out" style="margin-top:12px"></div>
+    <p class="note" id="click-hint" class="hidden"></p>
+  </section>
+
+  <!-- 5 · Save -->
+  <section class="panel hidden" id="sec-save">
+    <h2><span class="step">5</span> Save</h2>
+    <div class="row">
+      <div class="field" style="flex:1;min-width:280px">
+        <label for="notes">Notes (lens, aperture, mounting — anything needed to reproduce this)</label>
+        <input id="notes" placeholder="e.g. 8mm lens, f/4, focus locked">
+      </div>
+      <button id="btn-save" class="accent">Save calibration</button>
+    </div>
+    <pre class="report" id="results-summary" style="margin-top:12px"></pre>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

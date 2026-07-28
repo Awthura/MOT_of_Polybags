@@ -56,7 +56,17 @@ class ExtrinsicResult:
 
     @property
     def height_above_belt_mm(self) -> float:
-        return float(self.camera_position_mm[2])
+        """Perpendicular distance from the belt plane, always positive.
+
+        The sign of the raw Z is a convention artefact, not information.
+        OpenCV's chessboard frame is X right, Y down, Z = X x Y — so +Z points
+        *into* the board, away from a camera viewing its face, and a correctly
+        solved camera lands at negative Z. Reporting that raw sign invites the
+        reader to conclude something is upside down when nothing is; the signed
+        value is kept in `camera_position_mm` for anyone who needs the axis
+        convention itself.
+        """
+        return abs(float(self.camera_position_mm[2]))
 
 
 def solve_pose(object_points: np.ndarray, image_points: np.ndarray,
@@ -123,10 +133,14 @@ def calibrate_extrinsics(object_points: np.ndarray, image_points: np.ndarray,
         res.warnings.append(
             f"extrinsic reprojection error {err:.2f} px — board may not be flat "
             f"on the belt, or the intrinsics are wrong")
-    if res.height_above_belt_mm <= 0:
+    # Check the camera is a plausible distance from the plane rather than
+    # checking the sign of Z, which is a convention artefact (see
+    # height_above_belt_mm) and would flag every correct calibration.
+    if res.height_above_belt_mm < 50:
         res.warnings.append(
-            f"camera solved to {res.height_above_belt_mm:.0f} mm, i.e. below the "
-            f"belt plane — the board's coordinate frame is probably flipped")
+            f"camera solved to only {res.height_above_belt_mm:.0f} mm from the "
+            f"belt plane — implausibly close; check the board square size "
+            f"matches the printed board")
     return res
 
 

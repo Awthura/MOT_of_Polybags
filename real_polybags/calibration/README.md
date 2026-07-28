@@ -103,18 +103,65 @@ the shared belt frame, not through seeing each other's views.
 
 ---
 
-## 3. Layout
+## 3. The tool
+
+```bash
+pip install flask          # only external dependency
+python3 app.py             # -> http://127.0.0.1:5000
+```
+
+Pick **Synthetic camera** as the source to exercise the whole workflow with no
+hardware attached. That is not just a demo: the synthetic camera's true `K` is
+known, so the tool reports the recovered values *against the truth* and the
+result can be verified rather than merely looked at. Worth doing once before
+the lab session, so you arrive knowing the software works.
+
+Workflow: **Setup → Capture → Calibrate → Belt plane → Save.**
+
+- **Capture** shows live corner detection and a frame-coverage grid, and
+  `Space` grabs a shot so both hands stay on the board.
+- **Calibrate** reports `K`, `D`, per-view error, coverage and tilt — plus a
+  direct comparison against known values when the source has them (synthetic
+  truth, or RealSense factory intrinsics).
+- **Belt plane** solves the camera pose from the board lying on the belt, then
+  lets you click anywhere on the preview to read that point in belt
+  millimetres. Checking a couple of those against a tape measure is the fastest
+  honest test of the whole chain.
+- **Save** writes `results/<camera>.json` — `K`, `D`, `R`, `t`, both
+  homographies, error figures, the board used, and the image size.
+
+Verify the maths independently at any time:
+
+```bash
+python3 verify_synthetic.py --views 24        # renders a known camera, checks recovery
+```
+
+### Layout
 
 ```
 calibration/
   README.md              this file
+  app.py                 Flask server + JSON API
+  verify_synthetic.py    ground-truth verification, no hardware needed
   boards/                print-ready PDFs + PNGs + machine-readable specs
   core/
     board.py             ChArUco definition, print-ready output, layout checks
+    intrinsics.py        detection -> K, D, coverage analysis, warnings
+    extrinsics.py        solvePnP -> R, t; belt-plane homography and transforms
+    sources.py           synthetic / folder / RealSense / Basler / Lucid
+    store.py             results schema (named `store`, not `io` — that would
+                         shadow the stdlib module on sys.path)
+  static/                AMS-themed single page (no build step)
+  results/               per-camera calibration JSON
 ```
 
-Still to come (see the plan): `intrinsics.py`, `extrinsics.py`, `plane.py`,
-`io.py`, and the AMS-themed local web UI.
+### Resolution matters
+
+Intrinsics are **resolution-specific**. The Basler a2A1920 has a 1920x1200
+sensor while this rig records 1280x720, so the camera is cropping or scaling —
+either way a `K` measured at one resolution does not transfer to the other.
+Calibrate at exactly the resolution you record at; the saved record stores
+`image_size` so a mismatch is at least detectable later.
 
 ---
 
