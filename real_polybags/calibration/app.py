@@ -39,6 +39,7 @@ import board as board_mod            # noqa: E402
 import intrinsics as intr            # noqa: E402
 import extrinsics as extr            # noqa: E402
 import sources as src_mod            # noqa: E402
+import beltmap as bmap               # noqa: E402
 import store as calstore             # noqa: E402  (NOT 'io' — that
                                      #   shadows the stdlib module on sys.path)
 
@@ -368,6 +369,66 @@ def api_save():
 @app.route("/api/results")
 def api_results():
     return jsonify({"summary": calstore.summarise(S.results_dir)})
+
+
+# ── Belt map ─────────────────────────────────────────────────────────────────
+
+@app.route("/api/beltmap", methods=["POST"])
+def api_beltmap():
+    """Build the top-down conveyor map from every saved calibration.
+
+    Reads results/*.json rather than only the live session, because the map is
+    inherently multi-camera: it is the artefact that shows what the separately
+    calibrated cameras look like *together*, including whether they overlap at
+    all — which this rig has never established.
+    """
+    import base64
+    data = request.get_json(force=True) or {}
+    width = float(data.get("belt_width_mm", 700))
+    length = float(data.get("belt_length_mm", 1400))
+    mmpp = float(data.get("mm_per_px", 2.0))
+    margin = float(data.get("margin_mm", 50))
+
+    cams, skipped = [], []
+    for f in sorted(S.results_dir.glob("*.json")):
+        rec = calstore.load(f)
+        a = calstore.load_arrays(rec)
+        if "K" not in a or "rvec" not in a:
+            skipped.append({"camera": rec.get("camera", f.stem),
+                            "why": "no extrinsics — solve the belt plane for it"})
+            continue
+        cams.append(bmap.CameraOnBelt(
+            name=rec["camera"], K=a["K"], D=a["D"],
+            rvec=a["rvec"], tvec=a["tvec"], image_size=a["image_size"]))
+
+    if not cams:
+        return jsonify({"ok": False,
+                        "error": "no calibrations with extrinsics found — "
+                                 "calibrate a camera and solve its belt plane first",
+                        "skipped": skipped}), 400
+
+    frame = bmap.BeltFrame.from_belt(width, length, mm_per_px=mmpp, margin_mm=margin)
+
+    # Rectify the live camera into the map if it happens to be one of these.
+    images = {}
+    with S.lock:
+        if S.last_frame is not None and S.camera in [c.name for c in cams]:
+            images[S.camera] = S.last_frame
+    base = (bmap.mosaic(images, cams, frame)[0] if images
+            else np.full((frame.height_px, frame.width_px, 3), 26, np.uint8))
+    canvas = bmap.draw_overlay(base, cams, frame, grid_mm=100.0)
+
+    rep = bmap.coverage_report(cams, frame)
+    ok, buf = cv2.imencode(".png", canvas)
+    return jsonify({
+        "ok": True,
+        "png": base64.b64encode(buf).decode() if ok else "",
+        "frame": frame.to_dict(),
+        "cameras": [c.name for c in cams],
+        "skipped": skipped,
+        "coverage": rep,
+        "live_overlaid": list(images),
+    })
 
 
 def main():

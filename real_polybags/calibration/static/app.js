@@ -71,6 +71,7 @@ $('btn-start').addEventListener('click', async () => {
   $('sec-capture').classList.remove('hidden');
   $('sec-results').classList.add('hidden');
   $('sec-belt').classList.add('hidden');
+  $('sec-map').classList.add('hidden');
   $('sec-save').classList.add('hidden');
   // Cache-bust so restarting a session does not reuse the old MJPEG stream.
   $('stream').src = '/api/stream?t=' + Date.now();
@@ -146,6 +147,7 @@ $('btn-calibrate').addEventListener('click', async () => {
 
   $('sec-results').classList.remove('hidden');
   $('sec-belt').classList.remove('hidden');
+  $('sec-map').classList.remove('hidden');
   $('sec-save').classList.remove('hidden');
   $('report').textContent = r.report;
 
@@ -231,6 +233,53 @@ $('stream').addEventListener('click', async (e) => {
 });
 
 // ── Save ────────────────────────────────────────────────────────────────────
+
+$('btn-map').addEventListener('click', async () => {
+  toast('Building belt map…');
+  const r = await post('/api/beltmap', {
+    belt_width_mm: parseFloat($('bw').value) || 700,
+    belt_length_mm: parseFloat($('bl').value) || 1400,
+    mm_per_px: parseFloat($('bres').value) || 2,
+  });
+  if (!r.ok) { toast(r.error, 6000); return; }
+
+  $('map-img').src = 'data:image/png;base64,' + r.png;
+  $('map-img').style.display = 'block';
+  $('map-empty').style.display = 'none';
+
+  const cov = r.coverage;
+  const mm2cm2 = (v) => (v / 100).toFixed(0);
+  let html = `<div class="stat"><span class="k">cameras on map</span>
+      <span class="v">${r.cameras.join(', ')}</span></div>`;
+  html += `<div class="stat"><span class="k">belt covered</span>
+      <span class="v">${mm2cm2(cov.covered_mm2)} / ${mm2cm2(cov.map_area_mm2)} cm²</span></div>`;
+  for (const [n, a] of Object.entries(cov.per_camera_mm2)) {
+    html += `<div class="stat"><span class="k">${n}</span><span class="v">${mm2cm2(a)} cm²</span></div>`;
+  }
+  html += `<div style="margin-top:10px"><strong style="font-size:12px;text-transform:uppercase;
+      letter-spacing:.6px;color:var(--ink-dim)">Overlap (measured)</strong></div>`;
+  const pairs = Object.entries(cov.pairwise);
+  if (!pairs.length) {
+    html += `<p class="note">Only one camera calibrated — nothing to compare.</p>`;
+  } else {
+    pairs.forEach(([pair, v]) => {
+      const pct = (v.fraction_of_smaller * 100).toFixed(1);
+      const cls = v.overlap_mm2 > 0 ? 'ok' : 'warn';
+      html += `<div class="stat"><span class="k">${pair.replace('|', ' / ')}</span>
+        <span class="v">${mm2cm2(v.overlap_mm2)} cm²
+        <span class="pill ${cls}">${pct}%</span></span></div>`;
+    });
+    html += `<p class="note">${cov.any_overlap
+      ? 'Cameras share belt area — they can be associated geometrically in the overlap.'
+      : 'No overlap found. Cameras are still in one frame via the belt, but a bag is never seen by two at once, so hand-off depends on belt travel rather than shared view.'}</p>`;
+  }
+  if (r.skipped && r.skipped.length) {
+    html += `<p class="note" style="color:var(--warn)">Skipped: ` +
+      r.skipped.map(s => `${s.camera} (${s.why})`).join('; ') + `</p>`;
+  }
+  $('map-stats').innerHTML = html;
+  toast('Belt map built');
+});
 
 $('btn-save').addEventListener('click', async () => {
   const r = await post('/api/save', { notes: $('notes').value });

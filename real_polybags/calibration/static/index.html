@@ -128,9 +128,37 @@
     <p class="note" id="click-hint" class="hidden"></p>
   </section>
 
-  <!-- 5 · Save -->
+  <!-- 5 · Belt map -->
+  <section class="panel hidden" id="sec-map">
+    <h2><span class="step">5</span> Belt map</h2>
+    <p class="note" style="margin-top:0">
+      The top-down metric map of the conveyor, built from every saved
+      calibration. This is the artefact the MOT stage consumes: a bag at
+      (X, Y) millimetres here is the same bag regardless of which camera saw
+      it. It also <strong>measures</strong> whether the cameras overlap — a
+      question this rig has never settled.
+    </p>
+    <div class="row">
+      <div class="field"><label for="bw">Belt width (mm)</label>
+        <input id="bw" type="number" value="700" step="10" size="8"></div>
+      <div class="field"><label for="bl">Belt length (mm)</label>
+        <input id="bl" type="number" value="1400" step="10" size="8"></div>
+      <div class="field"><label for="bres">Map resolution (mm/px)</label>
+        <input id="bres" type="number" value="2" step="0.5" min="0.5" size="8"></div>
+      <button id="btn-map">Build belt map</button>
+    </div>
+    <div class="split" style="margin-top:12px">
+      <div id="map-wrap" style="background:#111;border-radius:var(--radius);padding:8px;overflow:auto;max-height:640px">
+        <img id="map-img" style="max-width:100%;display:none" alt="belt map">
+        <p class="note" id="map-empty" style="margin:8px">Not built yet.</p>
+      </div>
+      <div id="map-stats"></div>
+    </div>
+  </section>
+
+  <!-- 6 · Save -->
   <section class="panel hidden" id="sec-save">
-    <h2><span class="step">5</span> Save</h2>
+    <h2><span class="step">6</span> Save</h2>
     <div class="row">
       <div class="field" style="flex:1;min-width:280px">
         <label for="notes">Notes (lens, aperture, mounting — anything needed to reproduce this)</label>

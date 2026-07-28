@@ -142,18 +142,50 @@ python3 verify_synthetic.py --views 24        # renders a known camera, checks r
 calibration/
   README.md              this file
   app.py                 Flask server + JSON API
-  verify_synthetic.py    ground-truth verification, no hardware needed
+  verify_synthetic.py    intrinsics/extrinsics ground-truth check, no hardware
+  verify_beltmap.py      multi-camera belt-map check, no hardware
   boards/                print-ready PDFs + PNGs + machine-readable specs
   core/
     board.py             ChArUco definition, print-ready output, layout checks
     intrinsics.py        detection -> K, D, coverage analysis, warnings
     extrinsics.py        solvePnP -> R, t; belt-plane homography and transforms
+    beltmap.py           top-down conveyor map, footprints, overlap, parallax
     sources.py           synthetic / folder / RealSense / Basler / Lucid
     store.py             results schema (named `store`, not `io` — that would
                          shadow the stdlib module on sys.path)
   static/                AMS-themed single page (no build step)
   results/               per-camera calibration JSON
 ```
+
+### The belt map
+
+The payoff. Once each camera has intrinsics **and** a belt-plane pose, step 5
+builds a top-down metric map of the conveyor from every saved calibration:
+
+- each camera's view rectified to bird's-eye and composited,
+- each camera's **footprint** — the belt area it actually covers — drawn as a
+  polygon in millimetres,
+- **pairwise overlap measured**, which finally answers whether these cameras
+  share a view. Nothing in the design assumes they do; a bag at (X, Y) mm is the
+  same bag whichever camera saw it, because all of them are solved against one
+  belt frame rather than against each other.
+
+Give it the belt's real dimensions. `auto_frame()` exists for when the extent is
+unknown, but on a tilted view it sizes the canvas to everything the cameras see
+— floor, framing, machinery — which measured several times the belt area in
+testing and leaves the region of interest a small patch in an empty canvas.
+
+```bash
+python3 verify_beltmap.py --save-dir /tmp/beltmap   # 3 synthetic cameras, checked
+```
+
+**One honest limitation.** The map assumes everything lies on Z = 0. A bag has
+height, so its top surface projects outward from the camera's nadir — for a
+60 mm bag in the verification rig, 10–45 mm of displacement depending on
+distance from the camera. That is a *systematic bias*, not noise: it does not
+average away, and it grows toward the frame edges. `parallax_error_mm()`
+quantifies it for a given camera, point and bag height, so it can be accounted
+for rather than discovered later.
 
 ### Resolution matters
 
