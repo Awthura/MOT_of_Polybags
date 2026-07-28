@@ -766,6 +766,10 @@ def display_loop(workers, duration, verbose):
     N    = max(len(workers), 1)
     COLS = math.ceil(math.sqrt(N))
     ROWS = math.ceil(N / COLS)
+    # Title reflects the actual camera count — the rig defaults to 4 now, and a
+    # window labelled "5-Camera" while recording 4 is a small but real way to
+    # mislead someone checking a run at a glance.
+    WIN = f'{len(workers)}-Camera Recording  |  Q=stop  +/-=Lucid exposure'
 
     lucid_worker = next((w for w in workers if isinstance(w, LucidWorker)), None)
     last_good    = {w.name: None for w in workers}
@@ -778,7 +782,7 @@ def display_loop(workers, duration, verbose):
         waiting = np.full((PREVIEW_H * ROWS, PREVIEW_W * COLS, 3), 30, dtype=np.uint8)
         cv2.putText(waiting, "Waiting for cameras...", (10, PREVIEW_H),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
-        cv2.imshow('5-Camera Recording  |  Q=stop  +/-=Lucid exposure', waiting)
+        cv2.imshow(WIN, waiting)
         if cv2.waitKey(50) & 0xFF == ord('q'):
             for w in workers:
                 w.stop()
@@ -832,7 +836,7 @@ def display_loop(workers, duration, verbose):
         rows = [np.hstack(tiles[i:i + COLS]) for i in range(0, len(tiles), COLS)]
         grid = np.vstack(rows)
 
-        cv2.imshow('5-Camera Recording  |  Q=stop  +/-=Lucid exposure', grid)
+        cv2.imshow(WIN, grid)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
