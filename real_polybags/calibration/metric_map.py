@@ -51,12 +51,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 import analyse_overlap as ov
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "core"))
+import store as calstore                                        # noqa: E402
 
 
 def click_four(img, title="Click 4 corners: across-top L, across-top R, "
@@ -200,6 +204,8 @@ def main():
     ap.add_argument("--t", type=float, default=0.5)
     ap.add_argument("--mm-per-px", type=float, default=2.0)
     ap.add_argument("--out", default="maps")
+    ap.add_argument("--results-dir", default=str(Path(__file__).resolve().parent / "results"),
+                    help="also write standard per-camera calibration records here")
     args = ap.parse_args()
 
     frames = ov.frames_from_session(Path(args.dir), args.session, args.t)
@@ -277,6 +283,27 @@ def main():
     }
     (outdir / f"metric_{args.session}.json").write_text(json.dumps(rec, indent=2) + "\n")
 
+    # Also write into the standard per-camera results, so the belt map, the web
+    # tool and the MOT stage all read ONE format regardless of how the mapping
+    # was obtained. `method` records the provenance, because the two routes are
+    # not equivalent and a consumer has to be able to tell them apart.
+    results_dir = Path(args.results_dir)
+    written = []
+    h, w = img.shape[:2]
+    calstore.save(calstore.build_plane_record(
+        args.camera, H, (w, h), args.width_mm, args.length_mm,
+        [list(p) for p in pts], session=args.session,
+        notes="tape-measured plane homography"), results_dir)
+    written.append(args.camera)
+    for other, Ho in propagated.items():
+        oh, ow = frames[other].shape[:2]
+        calstore.save(calstore.build_plane_record(
+            other, np.array(Ho), (ow, oh), args.width_mm, args.length_mm,
+            image_points=None, session=args.session,
+            notes="scale propagated via inter-camera homography",
+            propagated_from=args.camera), results_dir)
+        written.append(other)
+
     print()
     print("=" * 74)
     print(f"METRIC MAP — measured on {args.camera}")
@@ -291,6 +318,11 @@ def main():
     else:
         print("  no cluster manifest found; run build_conveyor_map.py first to")
         print("  propagate this scale to the other camera(s) automatically")
+    print(f"  results written for: {', '.join(written)}")
+    print(f"    -> {results_dir}")
+    print("  These feed the belt map and the MOT stage directly. Re-solving")
+    print("  after intrinsics are calibrated upgrades them in place — the")
+    print("  clicked points are stored, so no second tape measurement.")
     print("=" * 74)
     return 0
 

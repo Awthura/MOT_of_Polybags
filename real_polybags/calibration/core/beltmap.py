@@ -94,24 +94,75 @@ class BeltFrame:
 
 @dataclass
 class CameraOnBelt:
-    """One calibrated camera, ready to be placed on the map."""
+    """One camera placed on the belt map.
+
+    Supports two levels of calibration, because both are useful and the second
+    is not always available yet:
+
+    **Full** — `K`, `D`, `rvec`, `tvec` from a board. Distortion is corrected,
+    the camera's true 3-D pose is known, and the belt mapping is exact.
+
+    **Homography-only** — just `H_image_to_belt`, obtained from four clicked
+    points and a tape measure with no board and no intrinsics. The plane mapping
+    is real and metric, but lens distortion is not modelled (a homography
+    cannot represent it), so accuracy falls off toward the frame edges, and
+    there is no camera pose.
+
+    Both populate the same map. Which one a camera used is recorded rather than
+    inferred, so a homography-only result is never mistaken for a calibrated
+    one — and re-solving with intrinsics later upgrades it in place.
+    """
     name: str
-    K: np.ndarray
-    D: np.ndarray
-    rvec: np.ndarray
-    tvec: np.ndarray
     image_size: tuple[int, int]        # (w, h)
+    K: np.ndarray = None
+    D: np.ndarray = None
+    rvec: np.ndarray = None
+    tvec: np.ndarray = None
     H_image_to_belt: np.ndarray = field(default=None)
 
     def __post_init__(self):
         if self.H_image_to_belt is None:
+            if self.K is None or self.rvec is None:
+                raise ValueError(
+                    f"{self.name}: needs either full intrinsics+pose, or an "
+                    f"H_image_to_belt from the tape-measure route")
             H = extr.homography_from_pose(self.K, self.rvec, self.tvec)
             self.H_image_to_belt = np.linalg.inv(H)
+        if self.D is None:
+            self.D = np.zeros(5)
+
+    @property
+    def has_intrinsics(self) -> bool:
+        return self.K is not None and self.rvec is not None
 
     @property
     def position_mm(self) -> np.ndarray:
+        """Camera centre in belt coordinates. Requires a full calibration.
+
+        A homography alone cannot yield this: it describes where the plane goes,
+        not where the camera is, and infinitely many camera poses produce the
+        same plane mapping. Returns NaN rather than a fabricated number.
+        """
+        if not self.has_intrinsics:
+            return np.array([np.nan, np.nan, np.nan])
         R, _ = cv2.Rodrigues(self.rvec)
         return (-R.T @ self.tvec).ravel()
+
+    def to_belt(self, pts_px: np.ndarray) -> np.ndarray:
+        """Image pixels -> belt millimetres, by whichever route this camera has."""
+        pts = np.asarray(pts_px, np.float32).reshape(-1, 1, 2)
+        if self.has_intrinsics:
+            return extr.image_to_belt(pts.reshape(-1, 2), self.K, self.D,
+                                      self.H_image_to_belt)
+        return cv2.perspectiveTransform(pts, self.H_image_to_belt).reshape(-1, 2)
+
+    def to_image(self, pts_mm: np.ndarray) -> np.ndarray:
+        """Belt millimetres -> image pixels."""
+        pts = np.asarray(pts_mm, np.float32).reshape(-1, 2)
+        if self.has_intrinsics:
+            return extr.belt_to_image(pts, self.K, self.D, self.rvec, self.tvec)
+        inv = np.linalg.inv(self.H_image_to_belt)
+        return cv2.perspectiveTransform(pts.reshape(-1, 1, 2), inv).reshape(-1, 2)
 
 
 def footprint(cam: CameraOnBelt, samples_per_edge: int = 24) -> np.ndarray:
@@ -129,7 +180,7 @@ def footprint(cam: CameraOnBelt, samples_per_edge: int = 24) -> np.ndarray:
     bottom = np.column_stack([(1 - t) * w, np.full_like(t, h - 1)])
     left = np.column_stack([np.zeros_like(t), (1 - t) * h])
     border = np.vstack([top, right, bottom, left]).astype(np.float32)
-    return extr.image_to_belt(border, cam.K, cam.D, cam.H_image_to_belt)
+    return cam.to_belt(border)
 
 
 def auto_frame(cams: list[CameraOnBelt], margin_mm: float = 50.0,
@@ -174,9 +225,10 @@ def rectify(image: np.ndarray, cam: CameraOnBelt, frame: BeltFrame,
     map_px = np.stack([xs.ravel(), ys.ravel()], axis=-1)
     mm = frame.px_to_mm(map_px)
 
-    obj = np.column_stack([mm, np.zeros(len(mm))]).astype(np.float32).reshape(-1, 1, 3)
-    img_pts, _ = cv2.projectPoints(obj, cam.rvec, cam.tvec, cam.K, cam.D)
-    img_pts = img_pts.reshape(-1, 2)
+    # Uses projectPoints when intrinsics exist so lens distortion is included;
+    # falls back to the plane homography alone otherwise, which is the best a
+    # tape-measured camera can do.
+    img_pts = cam.to_image(mm)
 
     mx = img_pts[:, 0].reshape(H, W).astype(np.float32)
     my = img_pts[:, 1].reshape(H, W).astype(np.float32)

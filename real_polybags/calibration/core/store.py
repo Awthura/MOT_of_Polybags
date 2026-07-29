@@ -47,6 +47,50 @@ def _clean(o):
     return o
 
 
+def build_plane_record(camera: str, H_image_to_belt, image_size,
+                       width_mm: float, length_mm: float,
+                       image_points, session: str = "", notes: str = "",
+                       propagated_from: str | None = None) -> dict:
+    """A calibration obtained from four clicked points and a tape measure.
+
+    Written into the SAME schema as a board calibration so everything
+    downstream reads one format — but with `method` recorded, because the two
+    are not equivalent and a consumer must be able to tell them apart:
+    this route has no intrinsics, so lens distortion is uncorrected and
+    accuracy degrades toward the frame edges.
+
+    `reference_points` are kept deliberately. When intrinsics are measured
+    later, the same clicks can be undistorted and re-solved into a better
+    homography without going back to the belt with a tape measure.
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "camera": camera,
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "method": "homography_tape",
+        "source": session,
+        "notes": notes,
+        "extrinsics": _clean({
+            "H_image_to_belt": H_image_to_belt,
+            "H_belt_to_image": np.linalg.inv(np.asarray(H_image_to_belt, float)),
+            "image_size": list(image_size),
+        }),
+        "reference_points": _clean({
+            "image_points": image_points,
+            "belt_points_mm": [[0, 0], [width_mm, 0],
+                               [width_mm, length_mm], [0, length_mm]],
+            "width_mm": width_mm, "length_mm": length_mm,
+            "propagated_from": propagated_from,
+        }),
+        "limitations": [
+            "no intrinsics: lens distortion is not corrected, so error grows "
+            "toward the frame edges",
+            "no camera pose: a homography fixes the plane mapping, not where "
+            "the camera is",
+        ],
+    }
+
+
 def build_record(camera: str, intr_result=None, extr_result=None,
                  board_spec=None, source: str = "", notes: str = "",
                  reference: dict | None = None) -> dict:
@@ -113,6 +157,11 @@ def load(path: Path) -> dict:
     return rec
 
 
+def method_of(record: dict) -> str:
+    """How this calibration was obtained: 'board' or 'homography_tape'."""
+    return record.get("method", "board" if "intrinsics" in record else "unknown")
+
+
 def load_arrays(record: dict) -> dict:
     """Pull the matrices back out as numpy, ready to use."""
     out = {}
@@ -122,10 +171,18 @@ def load_arrays(record: dict) -> dict:
         out["image_size"] = tuple(record["intrinsics"]["image_size"])
     if "extrinsics" in record:
         e = record["extrinsics"]
-        out["rvec"] = np.array(e["rvec"], float).reshape(3, 1)
-        out["tvec"] = np.array(e["tvec_mm"], float).reshape(3, 1)
-        out["H_belt_to_image"] = np.array(e["H_belt_to_image"], float)
-        out["H_image_to_belt"] = np.array(e["H_image_to_belt"], float)
+        # A tape-measured record has the homographies but no pose, so these are
+        # fetched conditionally rather than assumed present.
+        if "rvec" in e:
+            out["rvec"] = np.array(e["rvec"], float).reshape(3, 1)
+        if "tvec_mm" in e:
+            out["tvec"] = np.array(e["tvec_mm"], float).reshape(3, 1)
+        if "H_belt_to_image" in e:
+            out["H_belt_to_image"] = np.array(e["H_belt_to_image"], float)
+        if "H_image_to_belt" in e:
+            out["H_image_to_belt"] = np.array(e["H_image_to_belt"], float)
+        if "image_size" in e and "image_size" not in out:
+            out["image_size"] = tuple(e["image_size"])
     return out
 
 
