@@ -179,9 +179,40 @@ def api_session():
     ref = None
     if hasattr(S.source, "factory_intrinsics"):
         ref = S.source.factory_intrinsics()
+
+    # Reload this camera's saved intrinsics if it has been calibrated before.
+    # Without this, extrinsics could only ever follow intrinsics inside one
+    # sitting - which forbids the natural order of work: calibrate all four
+    # cameras' lenses first (that needs no rig access at all), then mount them,
+    # place the board on the belt once, and solve each camera's pose against
+    # that single placement without disturbing it.
+    loaded = None
+    path = S.results_dir / f"{camera}.json"
+    if path.exists():
+        try:
+            rec = calstore.load(path)
+            arr = calstore.load_arrays(rec)
+            if "K" in arr:
+                iv = rec["intrinsics"]
+                stored_size = tuple(iv["image_size"])
+                r = intr.IntrinsicResult(
+                    camera=camera, image_size=stored_size,
+                    K=arr["K"], D=arr["D"], rms=iv.get("rms_px", float("nan")),
+                    per_view_error=iv.get("per_view_error_px", []),
+                    view_sources=[], coverage=iv.get("coverage", {}),
+                    warnings=list(iv.get("warnings", [])))
+                with S.lock:
+                    S.intr_result = r
+                loaded = {"fx": r.fx, "fy": r.fy, "cx": r.cx, "cy": r.cy,
+                          "rms": r.rms, "image_size": list(stored_size),
+                          "created": rec.get("created_utc"),
+                          "warnings": r.warnings}
+        except Exception as e:
+            loaded = {"error": f"could not reload {path.name}: {e}"}
+
     return jsonify({"ok": True, "source": src_id, "camera": camera,
                     "board": preset, "truth": getattr(S.source, "truth", None),
-                    "factory_intrinsics": ref})
+                    "factory_intrinsics": ref, "loaded_intrinsics": loaded})
 
 
 @app.route("/api/stream")
@@ -311,6 +342,15 @@ def api_extrinsics():
         return jsonify({"ok": False, "error": "calibrate intrinsics first"}), 400
     if det is None:
         return jsonify({"ok": False, "error": "no board visible — place it flat on the belt"}), 400
+    # Intrinsics are resolution-specific. Reloaded ones may have been measured
+    # at a different capture resolution, and silently mixing them would produce
+    # a plausible-looking pose that is wrong by the scale ratio.
+    if tuple(det.image_size) != tuple(res_i.image_size):
+        return jsonify({"ok": False, "error":
+                        f"intrinsics were measured at {res_i.image_size[0]}x"
+                        f"{res_i.image_size[1]} but this camera is delivering "
+                        f"{det.image_size[0]}x{det.image_size[1]} — recalibrate "
+                        f"intrinsics at the resolution you record at"}), 400
     try:
         ext = extr.calibrate_extrinsics(det.object_points, det.image_points,
                                         res_i.K, res_i.D, camera=camera,

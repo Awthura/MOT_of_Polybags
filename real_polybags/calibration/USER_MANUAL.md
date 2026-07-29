@@ -211,6 +211,104 @@ Then **click anywhere on the preview** to read that point in belt millimetres.
 Clicking two points a known distance apart and comparing against a tape measure
 is the fastest honest test of the whole chain.
 
+---
+
+## 4b. The extrinsics workflow — getting four cameras into one frame
+
+Intrinsics and extrinsics are different kinds of job and are best done as two
+separate phases.
+
+**Intrinsics need no rig.** They describe the lens, not the mounting. You can
+calibrate a camera on a bench, at your desk, at any time — as long as the lens,
+focus and **resolution** are the ones you will record with, and are not touched
+afterwards.
+
+**Extrinsics need the rig, in its final state.** They describe where the camera
+is. Any bump to the mount invalidates them.
+
+So the natural order is: **all four cameras' intrinsics first, then all four
+cameras' extrinsics in one sitting.** The tool supports this — when you start a
+session for a camera that has been calibrated before, its saved intrinsics are
+reloaded automatically and you can go straight to step 4.
+
+### The actual problem: one shared origin
+
+Each camera solves its own pose. What makes them a *system* is that they solve
+against the **same belt origin**. There are two ways to achieve that.
+
+#### Method A — one board placement, every camera (preferred)
+
+If several cameras can see the same patch of belt:
+
+```
+1. STOP THE CONVEYOR.
+2. Lay the board flat on the belt, inside the shared view.
+3. DO NOT MOVE IT until every camera has been solved.
+4. For each camera in turn:
+     Setup -> enter that camera's name -> Start session
+       (its intrinsics reload automatically)
+     Step 4 -> leave both offsets at 0 -> Solve extrinsics
+     Step 6 -> Save
+```
+
+Every camera is solved against one physical board placement, so they share an
+origin **exactly** — no measurement, no error. Use this wherever it is possible.
+
+#### Method B — measured offsets (for cameras that see different stretches)
+
+If a camera cannot see the board where the first camera saw it:
+
+```
+1. Solve the first camera with offsets 0, 0. This DEFINES the belt origin.
+2. Move the board to where the next camera can see it.
+3. Measure the displacement from the original position:
+     X = across the belt, Y = along the belt (direction of travel).
+4. Enter those numbers as the origin offset, then solve.
+```
+
+Accuracy here is your tape measure's accuracy — a few millimetres, which
+propagates directly into cross-camera agreement. Prefer Method A when you can,
+and keep the moves square to the belt so X and Y stay meaningful.
+
+### Five things that will bite you
+
+1. **Stop the belt.** The board rests on the belt surface; a running conveyor
+   carries it away. Less obviously, Method A depends on every camera seeing the
+   *same* placement, which a moving board makes impossible.
+2. **Do not nudge the board between cameras.** In Method A that is the entire
+   basis of the shared frame.
+3. **The belt is not a perfect plane.** It can sag between rollers. Place the
+   board where the bags actually travel, not at an unsupported span, so Z = 0
+   means the surface bags really sit on.
+4. **Mount everything first.** Extrinsics describe the camera's position; if a
+   camera is re-aimed afterwards, its extrinsics are void. Intrinsics survive
+   re-aiming — only extrinsics need redoing.
+5. **Resolution must match.** If reloaded intrinsics were measured at a
+   different resolution than the camera is currently delivering, the tool
+   refuses to solve rather than producing a plausible pose that is wrong by the
+   scale ratio.
+
+### Checking it worked
+
+Per camera, before moving on:
+
+- **Height above belt** should match a tape measure. If the camera is 1.4 m up
+  and the tool says 300 mm, the board's square size is not what the tool thinks
+  — wrong board selected, or a scaled print.
+- **Reprojection error** under about 1 px.
+- **Click two points** on the preview a known distance apart and compare the
+  belt millimetres against a tape.
+
+Across cameras, once two or more are done:
+
+- **Build the belt map** (step 5). Footprints should sit where those cameras
+  actually look. A footprint in the wrong place means a wrong origin offset.
+- **The strongest check:** move the board to a *new* position on the belt, in
+  view of two solved cameras, and click the same board corner in each. Both
+  should report the same belt coordinates. This is independent — the extrinsics
+  came from the earlier placement — and it is the real test of whether the
+  cameras share a frame.
+
 ### Step 5 — Belt map
 
 Enter the belt's **real width and length**, then **Build belt map**. The map is
@@ -249,18 +347,27 @@ Beforehand
   1. Print both boards, check the 100 mm bar, mount them flat.
   2. Run the tool with the Synthetic source once, end to end.
 
-Per camera (about 15 minutes each)
-  3. Set the camera to the SAME resolution you record at.        ← see §6
+Phase 1 - intrinsics, per camera (~15 min each, no rig needed)
+  3. Set the camera to the SAME resolution you record at.        <- see §6
   4. Start session with that camera's name.
-  5. Capture 15-25 varied, tilted shots; fill the coverage grid.
+  5. Capture 15-25 varied, TILTED shots; fill the coverage grid.
   6. Calibrate. Read the warnings, not just the RMS.
-  7. Lay the board flat on the belt; solve extrinsics.
-  8. Click a few points, check against a tape measure.
-  9. Save.
+  7. Save.
+
+Phase 2 - extrinsics, all cameras in one sitting (rig required)
+  8. Mount and aim every camera in its final position.
+  9. STOP THE CONVEYOR. Lay the board flat on the belt.
+ 10. For each camera: start session (intrinsics reload automatically),
+     solve extrinsics, save. DO NOT MOVE THE BOARD between cameras.
+     If a camera cannot see it, use a measured origin offset - see §4b.
+ 11. Per camera: check height against a tape measure, click a couple of
+     points and compare distances.
 
 At the end
- 10. Build the belt map with real belt dimensions.
- 11. Check the overlap figures and that footprints look sensible.
+ 12. Build the belt map with real belt dimensions.
+ 13. Check the overlap figures and that footprints look sensible.
+ 14. Move the board somewhere new and confirm two cameras agree on where
+     it is - the real test of a shared frame.
 ```
 
 **Calibrate the RealSense first.** It is the only camera with factory

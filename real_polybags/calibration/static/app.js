@@ -69,6 +69,7 @@ $('btn-start').addEventListener('click', async () => {
 
   REFERENCE = r.truth || r.factory_intrinsics || null;
   $('sec-capture').classList.remove('hidden');
+  HAVE_INTRINSICS = false; HAVE_EXTRINSICS = false;
   $('sec-results').classList.add('hidden');
   $('sec-belt').classList.add('hidden');
   $('sec-map').classList.add('hidden');
@@ -77,7 +78,31 @@ $('btn-start').addEventListener('click', async () => {
   $('stream').src = '/api/stream?t=' + Date.now();
   $('hdr-status').textContent = `${r.camera} · ${r.source} · ${r.board}`;
   refreshShots();
-  toast('Session started');
+  // If this camera was calibrated before, its intrinsics come back with the
+  // session and step 4 can be used straight away — that is what makes
+  // "all intrinsics first, then all extrinsics against one board placement"
+  // possible.
+  if (r.loaded_intrinsics && !r.loaded_intrinsics.error) {
+    const L = r.loaded_intrinsics;
+    HAVE_INTRINSICS = true;
+    $('sec-belt').classList.remove('hidden');
+    $('sec-map').classList.remove('hidden');
+    $('sec-save').classList.remove('hidden');
+    $('report').textContent =
+      `Reloaded saved intrinsics for ${r.camera}\n` +
+      `  measured ${L.created || 'previously'} at ${L.image_size[0]}x${L.image_size[1]}\n` +
+      `  fx ${L.fx.toFixed(1)}  fy ${L.fy.toFixed(1)}  ` +
+      `cx ${L.cx.toFixed(1)}  cy ${L.cy.toFixed(1)}  RMS ${L.rms.toFixed(3)} px\n\n` +
+      `Capture new shots above to re-measure, or go straight to step 4 and\n` +
+      `solve this camera's belt pose.`;
+    $('sec-results').classList.remove('hidden');
+    toast(`Loaded saved intrinsics for ${r.camera} — ready for extrinsics`, 5000);
+  } else {
+    toast('Session started');
+  }
+  if (r.loaded_intrinsics && r.loaded_intrinsics.error) {
+    toast(r.loaded_intrinsics.error, 6000);
+  }
   if (r.factory_intrinsics) toast('Factory intrinsics available — will be compared', 4500);
 });
 
@@ -183,6 +208,7 @@ $('btn-calibrate').addEventListener('click', async () => {
 // ── Extrinsics + click-to-validate ──────────────────────────────────────────
 
 let HAVE_EXTRINSICS = false;
+let HAVE_INTRINSICS = false;
 
 $('btn-extr').addEventListener('click', async () => {
   const r = await post('/api/extrinsics', {
