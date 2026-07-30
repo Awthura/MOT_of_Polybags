@@ -65,7 +65,18 @@ header .mark {
   font-weight: 700; font-size: 13px; letter-spacing: .5px;
 }
 header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-header .sub { font-size: 12px; opacity: .85; margin-left: auto; }
+header .sub { font-size: 12px; opacity: .85; margin-left: 18px; }
+
+/* Page switcher. Intrinsics are bench work and extrinsics are rig work; they
+   are separate sittings, so they are separate pages. */
+header .nav { display: flex; gap: 4px; margin-left: auto; }
+header .nav a {
+  color: #fff; text-decoration: none; font-size: 12px; font-weight: 600;
+  padding: 6px 12px; border-radius: 6px;
+  background: rgba(255,255,255,.12);
+}
+header .nav a:hover { background: rgba(255,255,255,.24); }
+header .nav a.on { background: var(--ams-green); }
 
 main {
   max-width: 1280px;
@@ -109,6 +120,16 @@ input, select, button, textarea {
   color: var(--ink);
 }
 input:focus, select:focus { outline: 2px solid var(--ams-blue-light); outline-offset: -1px; }
+
+/* Checkboxes must keep their native appearance: the rule above paints a panel
+   background over them, which in dark mode renders a ticked box and an empty
+   one as the same dark square. */
+input[type=checkbox] {
+  appearance: auto; -webkit-appearance: checkbox;
+  width: 16px; height: 16px; padding: 0;
+  background: none; border: none;
+  accent-color: var(--ams-green);
+}
 
 button {
   cursor: pointer;
@@ -157,6 +178,63 @@ button.danger { background: var(--bad); }
 .pill.ok   { background: rgba(47,143,78,.16);  color: var(--ok); }
 .pill.warn { background: rgba(200,137,26,.16); color: var(--warn); }
 .pill.bad  { background: rgba(192,57,43,.16);  color: var(--bad); }
+.pill.info { background: rgba(46,107,163,.18); color: var(--ams-blue-light); }
+.pill.idle { background: var(--panel-alt); color: var(--ink-dim); }
+
+/* ── Extrinsics page ─────────────────────────────────────────────────────── */
+
+.caps {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--ink-dim);
+}
+.mono { font-family: var(--mono); font-size: 12px; }
+.headline { font-size: 15px; font-weight: 600; }
+button.small { padding: 4px 10px; font-size: 12px; }
+label.radio { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+label.radio input { width: auto; }
+
+.tablewrap { overflow-x: auto; }
+
+table.roster, table.checks {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+}
+table.roster th, table.checks th {
+  text-align: left; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--ink-dim); font-weight: 600;
+  padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+table.roster td, table.checks td {
+  padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle;
+}
+table.roster td.cam { font-family: var(--mono); font-weight: 600; }
+table.roster input[type=number] { padding: 4px 6px; font-size: 13px; width: 84px; }
+table.roster .offset-pair { display: flex; gap: 6px; }
+table.roster .offset-pair input { width: 72px; }
+
+/* The anticipated measurements — shaded because they are inputs the operator
+   fills in ahead of the session, not results the tool produced. */
+table.roster .anticipated {
+  background: var(--panel-alt);
+  border-left: 1px solid var(--line);
+}
+table.roster th.anticipated { border-left: 1px solid var(--line); }
+
+table.roster tr.pending td { border-bottom: 1px solid var(--line); padding-top: 0; }
+table.roster tr.pending ul { margin: 0 0 6px; padding-left: 18px; }
+table.roster tr.pending li { font-size: 12px; color: var(--warn); }
+
+table.checks tr.chk.bad  td { background: rgba(192,57,43,.07); }
+table.checks tr.chk.warn td { background: rgba(200,137,26,.07); }
+table.checks tr.chk-hint td {
+  font-size: 12px; color: var(--ink-dim); padding-top: 0; border-bottom: none;
+}
+
+.banner {
+  margin-top: 10px; padding: 9px 12px; border-radius: 6px;
+  font-size: 13px; border: 1px solid var(--line); background: var(--panel-alt);
+}
+.banner.ok  { border-color: var(--ok);  background: rgba(47,143,78,.10); }
+.banner.bad { border-color: var(--bad); background: rgba(192,57,43,.10); }
 
 .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .shot { position: relative; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OVGU AMS — Extrinsics (rig session)</title>
+<link rel="stylesheet" href="ams.css">
+</head>
+<body>
+
+<header>
+  <div class="mark">AMS</div>
+  <div>
+    <h1>Extrinsics — rig session</h1>
+    <div style="font-size:12px;opacity:.85">OVGU · Chair of Automation / Manufacturing Systems</div>
+  </div>
+  <nav class="nav">
+    <a href="/">Intrinsics</a>
+    <a href="/extrinsics" class="on">Extrinsics</a>
+  </nav>
+  <div class="sub" id="hdr-status">no session</div>
+</header>
+
+<main>
+
+  <!-- A · Status board -->
+  <section class="panel">
+    <h2><span class="step">A</span> Status — what is still outstanding</h2>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div id="plan-headline" class="headline">loading…</div>
+      <div class="row" style="gap:8px">
+        <button id="btn-refresh" class="ghost">Refresh</button>
+        <button id="btn-save-plan" class="accent">Save plan</button>
+      </div>
+    </div>
+
+    <div class="tablewrap" style="margin-top:12px">
+      <table class="roster" id="roster">
+        <thead>
+          <tr>
+            <th>Camera</th>
+            <th>State</th>
+            <th>Intrinsics</th>
+            <th>Solved pose</th>
+            <th class="anticipated">Expected height (mm)</th>
+            <th class="anticipated">Planned offset X, Y (mm)</th>
+            <th class="anticipated">Measured</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="roster-body"></tbody>
+      </table>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div class="field">
+        <label for="new-cam">Add a camera to the plan</label>
+        <input id="new-cam" size="18" placeholder="e.g. rgbd_2_color">
+      </div>
+      <button id="btn-add-cam" class="ghost">Add</button>
+    </div>
+
+    <p class="note">
+      The shaded columns are the <strong>anticipated</strong> measurements: what
+      you expect to find, recorded before the solve so the solve can be checked
+      against something. An expected height is the cheapest guard there is
+      against the failure that otherwise goes unnoticed — a board printed at
+      "fit to page", which makes every distance wrong by the scale factor while
+      leaving the reprojection error looking perfectly healthy.
+    </p>
+    <p class="note">
+      Camera names must match the names the recorder writes its streams under
+      (<code>basler_1</code>, <code>rgbd_2_color</code>, …). A calibration saved
+      under a name nothing else uses is invisible downstream, and nothing will
+      report that — it simply never matches.
+    </p>
+  </section>
+
+  <!-- B · Session parameters -->
+  <section class="panel">
+    <h2><span class="step">B</span> Session parameters</h2>
+    <div class="row">
+      <div class="field">
+        <label>Origin method</label>
+        <div class="row" style="gap:14px;padding-top:6px">
+          <label class="radio"><input type="radio" name="method" value="A" checked>
+            <span>A — one board placement, every camera</span></label>
+          <label class="radio"><input type="radio" name="method" value="B">
+            <span>B — measured offsets per camera</span></label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="belt-w">Belt width (mm)</label>
+        <input id="belt-w" type="number" step="10" size="8">
+      </div>
+      <div class="field">
+        <label for="belt-l">Belt length (mm)</label>
+        <input id="belt-l" type="number" step="10" size="8">
+      </div>
+    </div>
+    <p class="note" id="method-note"></p>
+  </section>
+
+  <!-- C · Solve -->
+  <section class="panel">
+    <h2><span class="step">C</span> Solve a camera's belt pose</h2>
+    <div class="row">
+      <div class="field">
+        <label for="camera">Camera</label>
+        <select id="camera"></select>
+      </div>
+      <div class="field">
+        <label for="source">Frame source</label>
+        <select id="source"></select>
+      </div>
+      <div class="field" id="folder-field" style="display:none">
+        <label for="folder">Image folder</label>
+        <input id="folder" size="30" placeholder="/path/to/captures">
+      </div>
+      <div class="field">
+        <label for="board">Board on the belt</label>
+        <select id="board"></select>
+      </div>
+      <button id="btn-start" class="accent">Start session</button>
+    </div>
+    <div class="note" id="source-note"></div>
+    <div id="intr-state" class="banner hidden"></div>
+
+    <div class="split hidden" id="solve-body" style="margin-top:14px">
+      <div>
+        <div id="viewport">
+          <img id="stream" alt="camera preview">
+          <div id="marker"></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div class="field">
+            <label for="ox">Origin offset X (mm)</label>
+            <input id="ox" type="number" value="0" step="1" size="8">
+          </div>
+          <div class="field">
+            <label for="oy">Origin offset Y (mm)</label>
+            <input id="oy" type="number" value="0" step="1" size="8">
+          </div>
+          <button id="btn-extr">Solve extrinsics</button>
+        </div>
+        <p class="note" id="offset-hint"></p>
+      </div>
+
+      <div>
+        <strong class="caps">Measured vs anticipated</strong>
+        <div id="checks" style="margin-top:8px">
+          <p class="note">Nothing solved yet in this session.</p>
+        </div>
+        <div id="extr-out" style="margin-top:10px"></div>
+        <p class="note hidden" id="click-hint"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- D · Save -->
+  <section class="panel hidden" id="sec-save">
+    <h2><span class="step">D</span> Save</h2>
+    <div class="row">
+      <div class="field" style="flex:1;min-width:280px">
+        <label for="notes">Notes (mounting, board placement — anything needed to reproduce this)</label>
+        <input id="notes" placeholder="e.g. board at upstream end, belt stopped, mount unchanged since 29 Jul">
+      </div>
+      <button id="btn-save" class="accent">Save calibration</button>
+    </div>
+    <p class="note">
+      Saving writes <code>results/&lt;camera&gt;.json</code> with the reloaded
+      intrinsics and this pose together. Then start the next camera —
+      under Method A, without touching the board.
+    </p>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+<script src="common.js"></script>
+<script src="extrinsics.js"></script>
+</body>
+</html>

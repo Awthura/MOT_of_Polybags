@@ -8,6 +8,12 @@
 *.mp4
 *.mov
 
+# ...except artefacts that are source, not output: the printed calibration
+# boards, and the screenshots PROCEDURE.md renders. Both were previously kept
+# only by `git add -f`, which is a step someone eventually forgets.
+!real_polybags/calibration/boards/*.png
+!real_polybags/calibration/docs/screenshots/*.png
+
 # Binary / large data
 *.npy
 *.pkl

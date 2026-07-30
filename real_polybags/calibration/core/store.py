@@ -141,6 +141,48 @@ def build_record(camera: str, intr_result=None, extr_result=None,
     return rec
 
 
+def carry_forward_extrinsics(record: dict, results_dir: Path) -> dict:
+    """Keep an already-saved pose when the record being written has none.
+
+    `results/<camera>.json` holds one camera's whole calibration, and a save
+    rewrites the file. Intrinsics and extrinsics are now measured in separate
+    sittings on separate pages, so the ordinary case — solve the pose at the
+    rig, then later re-measure the lens at a desk — would otherwise delete the
+    pose as a side effect of saving the lens. Nothing would report that; the
+    camera would simply drop off the belt map.
+
+    If the intrinsics changed, the carried pose is kept but flagged: it was
+    solved against a different `K`, so it is stale rather than merely old. It is
+    not silently discarded either — deciding which is right belongs to the
+    operator, who knows whether the camera has been touched.
+    """
+    if "extrinsics" in record:
+        return record
+    path = Path(results_dir) / f"{record['camera']}.json"
+    if not path.exists():
+        return record
+    try:
+        old = load(path)
+    except Exception:
+        return record
+    if "extrinsics" not in old:
+        return record
+
+    carried = dict(old["extrinsics"])
+    old_K, new_K = (old.get("intrinsics") or {}).get("K"), \
+                   (record.get("intrinsics") or {}).get("K")
+    if old_K is not None and new_K is not None and \
+            not np.allclose(np.array(old_K, float), np.array(new_K, float)):
+        carried.setdefault("warnings", [])
+        carried["warnings"] = list(carried["warnings"]) + [
+            "pose carried over from a previous save and solved against "
+            "different intrinsics — re-solve the belt plane, or discard it"]
+        carried["stale"] = True
+    record["extrinsics"] = carried
+    record.setdefault("notes", "")
+    return record
+
+
 def save(record: dict, results_dir: Path) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     path = results_dir / f"{record['camera']}.json"
@@ -160,6 +202,20 @@ def load(path: Path) -> dict:
 def method_of(record: dict) -> str:
     """How this calibration was obtained: 'board' or 'homography_tape'."""
     return record.get("method", "board" if "intrinsics" in record else "unknown")
+
+
+def is_synthetic(record: dict) -> bool:
+    """Was this calibration measured from the synthetic camera?
+
+    Worth its own check because the failure it prevents is invisible. The
+    synthetic source renders at 1280x720 — exactly what this rig records at — so
+    a synthetic `basler_1.json` passes the resolution guard, reloads silently
+    into a real session, and a real camera's pose is then solved against a
+    lens model that belongs to no lens. Every millimetre downstream is wrong,
+    and nothing about the result looks unusual.
+    """
+    return record.get("source") == "synthetic" or "synthetic_truth" in (
+        record.get("reference") or {})
 
 
 def load_arrays(record: dict) -> dict:

@@ -14,6 +14,10 @@
     <h1>Camera Calibration</h1>
     <div style="font-size:12px;opacity:.85">OVGU · Chair of Automation / Manufacturing Systems</div>
   </div>
+  <nav class="nav">
+    <a href="/" class="on">Intrinsics</a>
+    <a href="/extrinsics">Extrinsics</a>
+  </nav>
   <div class="sub" id="hdr-status">no session</div>
 </header>
 
@@ -55,6 +59,7 @@
         </div>
         <div class="row" style="margin-top:10px">
           <button id="btn-capture" class="accent">Capture shot</button>
+          <button id="btn-capture-all" class="hidden">Capture all frames</button>
           <button id="btn-calibrate" disabled>Calibrate intrinsics</button>
           <span id="cap-hint" class="note" style="margin:0"></span>
         </div>
@@ -102,30 +107,26 @@
     </div>
   </section>
 
-  <!-- 4 · Belt plane -->
+  <!-- 4 · Belt plane — handed off to the rig page -->
   <section class="panel hidden" id="sec-belt">
     <h2><span class="step">4</span> Belt plane — extrinsics</h2>
     <p class="note" style="margin-top:0">
-      Lay the board <strong>flat on the belt</strong> with it visible in the
-      preview above, then solve. This fixes the camera's pose relative to the
-      belt, which becomes the shared metric frame all cameras map into.
-      Use the origin offset when the board sits at a measured position away from
-      the belt origin — that is what ties cameras together without needing them
-      to share a view.
+      Extrinsics live on their <a href="/extrinsics">own page</a>. They are a
+      different job from this one: intrinsics describe the lens and can be
+      measured at a desk, while extrinsics describe where the camera is bolted
+      and need the rig in its final state. Doing all four lenses first, then
+      every pose in one sitting against a single board placement, is the order
+      that actually works — and the rig page is built around it.
+    </p>
+    <p class="note">
+      It also holds the <strong>anticipated measurements</strong>: the height
+      each camera is expected to sit at, and the origin offsets to be taken with
+      a tape. Recorded before the solve, they turn each result into a comparison
+      instead of a number to squint at.
     </p>
     <div class="row">
-      <div class="field">
-        <label for="ox">Origin offset X (mm)</label>
-        <input id="ox" type="number" value="0" step="1" size="8">
-      </div>
-      <div class="field">
-        <label for="oy">Origin offset Y (mm)</label>
-        <input id="oy" type="number" value="0" step="1" size="8">
-      </div>
-      <button id="btn-extr">Solve extrinsics</button>
+      <a href="/extrinsics"><button class="accent">Go to the rig page →</button></a>
     </div>
-    <div id="extr-out" style="margin-top:12px"></div>
-    <p class="note" id="click-hint" class="hidden"></p>
   </section>
 
   <!-- 5 · Belt map -->
@@ -172,6 +173,7 @@
 </main>
 
 <div id="toast"></div>
+<script src="common.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

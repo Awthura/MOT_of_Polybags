@@ -42,6 +42,7 @@ import sources as src_mod            # noqa: E402
 import beltmap as bmap               # noqa: E402
 import store as calstore             # noqa: E402  (NOT 'io' — that
                                      #   shadows the stdlib module on sys.path)
+import plan as rigplan               # noqa: E402
 
 app = Flask(__name__, static_folder=str(HERE / "static"), static_url_path="")
 
@@ -58,6 +59,10 @@ class Session:
         self.shots: list[intr.Detection] = []
         self.thumbs: list[str] = []
         self.intr_result = None
+        # Whether the intrinsics currently in hand came from the synthetic
+        # camera. Tracked because reusing them on real hardware is undetectable
+        # by any other means — see the guard in /api/extrinsics.
+        self.intr_synthetic = False
         self.extr_result = None
         self.last_frame = None
         self.last_detection = None
@@ -140,6 +145,19 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.route("/extrinsics")
+def extrinsics_page():
+    """The rig-phase page, deliberately separate from the intrinsics one.
+
+    Intrinsics are bench work and extrinsics are rig work; the manual already
+    treats them as two sittings, and putting them on one page invites the wrong
+    order. This page is usable on its own: it reloads saved intrinsics, shows
+    what is still outstanding across every camera, and checks each solve against
+    the measurement that was anticipated for it.
+    """
+    return send_from_directory(app.static_folder, "extrinsics.html")
+
+
 @app.route("/api/config")
 def api_config():
     return jsonify({
@@ -165,6 +183,7 @@ def api_session():
         S.camera = camera
         S.shots, S.thumbs = [], []
         S.intr_result = S.extr_result = None
+        S.intr_synthetic = False
         try:
             if src_id == "synthetic":
                 S.source = src_mod.SyntheticSource(S.spec)
@@ -203,9 +222,16 @@ def api_session():
                     warnings=list(iv.get("warnings", [])))
                 with S.lock:
                     S.intr_result = r
+                    S.intr_synthetic = calstore.is_synthetic(rec)
                 loaded = {"fx": r.fx, "fy": r.fy, "cx": r.cx, "cy": r.cy,
                           "rms": r.rms, "image_size": list(stored_size),
                           "created": rec.get("created_utc"),
+                          "saved_source": rec.get("source"),
+                          # The synthetic camera renders at 1280x720, the same
+                          # size this rig records at, so the resolution guard
+                          # above cannot catch a rehearsal result being reused
+                          # on real hardware. This can.
+                          "synthetic": calstore.is_synthetic(rec),
                           "warnings": r.warnings}
         except Exception as e:
             loaded = {"error": f"could not reload {path.name}: {e}"}
@@ -236,6 +262,50 @@ def api_capture():
         S.thumbs.append(base64.b64encode(buf).decode() if ok else "")
         n = len(S.shots)
     return jsonify({"ok": True, "n_shots": n, "coverage": coverage_now()})
+
+
+@app.route("/api/capture_all", methods=["POST"])
+def api_capture_all():
+    """Ingest every image in a folder source exactly once.
+
+    Clicking *Capture* cannot do this job. The preview reads the folder at
+    15 fps, so a 20-image set cycles in 1.3 seconds: hand-clicking samples it
+    effectively at random and takes some views twice. Duplicates are not
+    harmless — repeating a view weights it in the fit, which is the same
+    degeneracy as capturing twenty frontal shots, and it arrives disguised as a
+    healthy sample size.
+
+    Each file is read from disk directly rather than through `source.read()`, so
+    this neither races the preview thread nor depends on where its cursor
+    happens to be.
+    """
+    import base64
+    with S.lock:
+        source, spec = S.source, S.spec
+    if not isinstance(source, src_mod.FolderSource):
+        return jsonify({"ok": False,
+                        "error": "capture-all applies to the folder source only"}), 400
+
+    added, rejected = 0, []
+    for path in source.files:
+        img = cv2.imread(path)
+        name = Path(path).name
+        if img is None:
+            rejected.append({"file": name, "why": "unreadable"})
+            continue
+        det = intr.detect_charuco(img, spec, source=name)
+        if det is None:
+            rejected.append({"file": name, "why": "no board detected"})
+            continue
+        ok, buf = cv2.imencode(".jpg", cv2.resize(img, (160, 90)),
+                               [cv2.IMWRITE_JPEG_QUALITY, 70])
+        with S.lock:
+            S.shots.append(det)
+            S.thumbs.append(base64.b64encode(buf).decode() if ok else "")
+        added += 1
+
+    return jsonify({"ok": True, "added": added, "n_files": len(source.files),
+                    "rejected": rejected, "coverage": coverage_now()})
 
 
 @app.route("/api/shots")
@@ -305,6 +375,7 @@ def api_calibrate():
 
     with S.lock:
         S.intr_result = res
+        S.intr_synthetic = (S.source_id == "synthetic")
 
     payload = {
         "ok": True,
@@ -338,8 +409,22 @@ def api_extrinsics():
         res_i = S.intr_result
         det = S.last_detection
         camera = S.camera
+        synth_intr = S.intr_synthetic
+        src_id = S.source_id
     if res_i is None:
         return jsonify({"ok": False, "error": "calibrate intrinsics first"}), 400
+    # Synthetic intrinsics on a real camera. The synthetic source renders at
+    # 1280x720 — what this rig records at — so the resolution check cannot see
+    # this, and the resulting pose looks entirely normal while being wrong by
+    # whatever the real lens differs from the virtual one. Refused rather than
+    # warned: there is no case where it is the intended thing to do.
+    if synth_intr and src_id != "synthetic":
+        return jsonify({"ok": False, "error":
+                        f"the saved intrinsics for {camera} were measured from "
+                        f"the SYNTHETIC camera, but this session is running on "
+                        f"'{src_id}'. Those numbers describe a virtual lens. "
+                        f"Delete results/{camera}.json and calibrate this "
+                        f"camera's lens for real before solving its pose."}), 400
     if det is None:
         return jsonify({"ok": False, "error": "no board visible — place it flat on the belt"}), 400
     # Intrinsics are resolution-specific. Reloaded ones may have been measured
@@ -359,14 +444,27 @@ def api_extrinsics():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 400
     with S.lock:
         S.extr_result = ext
+
+    # Check the solve against what was anticipated for this camera. A pose is
+    # easy to look at and hard to judge on its own — 298 mm above the belt reads
+    # as a fine number until it is set beside the 1400 mm the camera is actually
+    # mounted at.
+    p = rigplan.load_plan(S.results_dir)
+    cplan = rigplan.camera_plan(p, camera) or rigplan.blank_camera(camera)
+    checks = rigplan.verify(cplan, ext.height_above_belt_mm,
+                            ext.reproj_error_px, off)
+
     return jsonify({
         "ok": True,
+        "camera": camera,
         "camera_position_mm": ext.camera_position_mm.tolist(),
         "height_above_belt_mm": ext.height_above_belt_mm,
         "reproj_error_px": ext.reproj_error_px,
         "n_points": ext.n_points,
         "H_image_to_belt": ext.H_image_to_belt.tolist(),
         "warnings": ext.warnings,
+        "checks": checks,
+        "verdict": rigplan.worst_status(checks),
     })
 
 
@@ -402,6 +500,10 @@ def api_save():
             camera=S.camera, intr_result=S.intr_result, extr_result=S.extr_result,
             board_spec=S.spec, source=S.source_id or "", reference=ref,
             notes=data.get("notes", ""))
+        # Saving rewrites the whole per-camera file. Intrinsics and extrinsics
+        # are measured in separate sittings, so a bench save must not delete a
+        # pose solved earlier at the rig.
+        rec = calstore.carry_forward_extrinsics(rec, S.results_dir)
         path = calstore.save(rec, S.results_dir)
     return jsonify({"ok": True, "path": str(path)})
 
@@ -409,6 +511,36 @@ def api_save():
 @app.route("/api/results")
 def api_results():
     return jsonify({"summary": calstore.summarise(S.results_dir)})
+
+
+# ── Rig plan and status board ────────────────────────────────────────────────
+
+def _plan_payload(p: dict) -> dict:
+    rows = rigplan.roster(S.results_dir, p)
+    return {"ok": True, "plan": p, "roster": rows,
+            "summary": rigplan.summarise_roster(rows),
+            "plan_path": str(rigplan.plan_path(S.results_dir))}
+
+
+@app.route("/api/plan", methods=["GET"])
+def api_plan_get():
+    """The session plan plus the live status of every camera.
+
+    The roster is rebuilt from `results/*.json` on every request rather than
+    cached: the point of this page is to answer "what is still outstanding",
+    and a stale answer to that question is worse than no answer.
+    """
+    return jsonify(_plan_payload(rigplan.load_plan(S.results_dir)))
+
+
+@app.route("/api/plan", methods=["POST"])
+def api_plan_post():
+    data = request.get_json(force=True) or {}
+    try:
+        rigplan.save_plan(data, S.results_dir)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 400
+    return jsonify(_plan_payload(rigplan.load_plan(S.results_dir)))
 
 
 # ── Belt map ─────────────────────────────────────────────────────────────────

@@ -1,28 +1,6 @@
-/* OVGU AMS calibration tool — client.
-   Vanilla JS, no build step: this runs next to a conveyor on whatever machine
-   is to hand, so a toolchain would be a liability rather than a convenience. */
-
-const $ = (id) => document.getElementById(id);
-const api = async (path, opts) => {
-  const r = await fetch(path, opts);
-  let j;
-  try { j = await r.json(); } catch { j = { ok: false, error: `HTTP ${r.status}` }; }
-  if (!r.ok && !j.error) j.error = `HTTP ${r.status}`;
-  return j;
-};
-const post = (path, body) => api(path, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body || {})
-});
-
-let toastTimer = null;
-function toast(msg, ms = 2600) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
-}
+/* OVGU AMS calibration tool — intrinsics page.
+   Shared helpers live in common.js. Extrinsics moved to extrinsics.js: they are
+   rig work rather than bench work, and the two are separate sittings. */
 
 // ── Setup ───────────────────────────────────────────────────────────────────
 
@@ -30,25 +8,15 @@ let CONFIG = null;
 
 async function loadConfig() {
   CONFIG = await api('/api/config');
-  const src = $('source');
-  src.innerHTML = '';
-  CONFIG.sources.forEach(s => {
-    const o = document.createElement('option');
-    o.value = s.id;
-    o.textContent = s.label + (s.available ? '' : ' — unavailable');
-    o.disabled = !s.available;
-    o.dataset.note = s.note;
-    src.appendChild(o);
-  });
-  const b = $('board');
-  b.innerHTML = '';
-  CONFIG.boards.forEach(bd => {
-    const o = document.createElement('option');
-    o.value = bd.id;
-    o.textContent = `${bd.name} — ${bd.squares[0]}x${bd.squares[1]}, ${bd.square_mm}mm (${bd.paper})`;
-    b.appendChild(o);
-  });
+  fillSourceAndBoardSelects(CONFIG, $('source'), $('board'));
   syncSourceUI();
+  // Prefill the belt dimensions from the rig plan, so the figure entered once
+  // on the rig page is the one the map is built with here.
+  const p = await api('/api/plan');
+  if (p.ok && p.plan && p.plan.belt) {
+    $('bw').value = p.plan.belt.width_mm;
+    $('bl').value = p.plan.belt.length_mm;
+  }
 }
 
 function syncSourceUI() {
@@ -69,7 +37,6 @@ $('btn-start').addEventListener('click', async () => {
 
   REFERENCE = r.truth || r.factory_intrinsics || null;
   $('sec-capture').classList.remove('hidden');
-  HAVE_INTRINSICS = false; HAVE_EXTRINSICS = false;
   $('sec-results').classList.add('hidden');
   $('sec-belt').classList.add('hidden');
   $('sec-map').classList.add('hidden');
@@ -77,14 +44,14 @@ $('btn-start').addEventListener('click', async () => {
   // Cache-bust so restarting a session does not reuse the old MJPEG stream.
   $('stream').src = '/api/stream?t=' + Date.now();
   $('hdr-status').textContent = `${r.camera} · ${r.source} · ${r.board}`;
+  $('btn-capture-all').classList.toggle('hidden', r.source !== 'folder');
   refreshShots();
   // If this camera was calibrated before, its intrinsics come back with the
-  // session and step 4 can be used straight away — that is what makes
-  // "all intrinsics first, then all extrinsics against one board placement"
-  // possible.
+  // session, and the rig page can solve its pose without recapturing anything —
+  // which is what makes "all intrinsics first, then all extrinsics against one
+  // board placement" possible.
   if (r.loaded_intrinsics && !r.loaded_intrinsics.error) {
     const L = r.loaded_intrinsics;
-    HAVE_INTRINSICS = true;
     $('sec-belt').classList.remove('hidden');
     $('sec-map').classList.remove('hidden');
     $('sec-save').classList.remove('hidden');
@@ -93,8 +60,8 @@ $('btn-start').addEventListener('click', async () => {
       `  measured ${L.created || 'previously'} at ${L.image_size[0]}x${L.image_size[1]}\n` +
       `  fx ${L.fx.toFixed(1)}  fy ${L.fy.toFixed(1)}  ` +
       `cx ${L.cx.toFixed(1)}  cy ${L.cy.toFixed(1)}  RMS ${L.rms.toFixed(3)} px\n\n` +
-      `Capture new shots above to re-measure, or go straight to step 4 and\n` +
-      `solve this camera's belt pose.`;
+      `Capture new shots above to re-measure, or go to the rig page and solve\n` +
+      `this camera's belt pose.`;
     $('sec-results').classList.remove('hidden');
     toast(`Loaded saved intrinsics for ${r.camera} — ready for extrinsics`, 5000);
   } else {
@@ -152,6 +119,22 @@ $('btn-capture').addEventListener('click', async () => {
   refreshShots();
 });
 
+// Folder source only. The preview cycles a folder at 15 fps, so clicking
+// Capture samples it at random and takes some views twice — and a duplicated
+// view is weighted twice in the fit while looking like a bigger sample.
+$('btn-capture-all').addEventListener('click', async () => {
+  $('btn-capture-all').disabled = true;
+  toast('Reading every frame in the folder…');
+  const r = await post('/api/capture_all');
+  $('btn-capture-all').disabled = false;
+  if (!r.ok) { toast(r.error, 5000); return; }
+  renderCoverage(r.coverage);
+  refreshShots();
+  const bad = (r.rejected || []).length;
+  toast(`Added ${r.added} of ${r.n_files} frames`
+        + (bad ? ` — ${bad} had no detectable board` : ''), bad ? 6000 : 3000);
+});
+
 // Space bar captures — the operator has both hands on the board.
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !$('sec-capture').classList.contains('hidden')
@@ -205,60 +188,7 @@ $('btn-calibrate').addEventListener('click', async () => {
   toast('Intrinsics calibrated');
 });
 
-// ── Extrinsics + click-to-validate ──────────────────────────────────────────
-
-let HAVE_EXTRINSICS = false;
-let HAVE_INTRINSICS = false;
-
-$('btn-extr').addEventListener('click', async () => {
-  const r = await post('/api/extrinsics', {
-    origin_x_mm: parseFloat($('ox').value) || 0,
-    origin_y_mm: parseFloat($('oy').value) || 0,
-  });
-  if (!r.ok) { toast(r.error, 5000); return; }
-  HAVE_EXTRINSICS = true;
-  const p = r.camera_position_mm;
-  const errCls = r.reproj_error_px < 1 ? 'ok' : (r.reproj_error_px < 2 ? 'warn' : 'bad');
-  $('extr-out').innerHTML = `
-    <div class="stat"><span class="k">camera position (belt frame)</span>
-      <span class="v">[${p.map(v => v.toFixed(0)).join(', ')}] mm</span></div>
-    <div class="stat"><span class="k">height above belt</span>
-      <span class="v">${r.height_above_belt_mm.toFixed(0)} mm</span></div>
-    <div class="stat"><span class="k">reprojection error</span>
-      <span class="v">${r.reproj_error_px.toFixed(3)} px
-      <span class="pill ${errCls}">${errCls === 'ok' ? 'good' : errCls}</span></span></div>
-    <div class="stat"><span class="k">points used</span><span class="v">${r.n_points}</span></div>
-    ${(r.warnings || []).map(w => `<div class="note" style="color:var(--warn)">${w}</div>`).join('')}`;
-  $('click-hint').classList.remove('hidden');
-  $('click-hint').textContent =
-    'Now click anywhere on the preview to read that point in belt millimetres — '
-    + 'the quickest way to sanity-check the mapping against a tape measure.';
-  toast('Extrinsics solved — click the preview to validate');
-});
-
-$('stream').addEventListener('click', async (e) => {
-  if (!HAVE_EXTRINSICS) return;
-  const img = e.target;
-  const rect = img.getBoundingClientRect();
-  // The preview is scaled to fit; convert back to native pixel coordinates,
-  // otherwise every clicked point would be wrong by the display scale factor.
-  const sx = img.naturalWidth / rect.width;
-  const sy = img.naturalHeight / rect.height;
-  const x = (e.clientX - rect.left) * sx;
-  const y = (e.clientY - rect.top) * sy;
-
-  const m = $('marker');
-  m.style.display = 'block';
-  m.style.left = (e.clientX - rect.left) + 'px';
-  m.style.top = (e.clientY - rect.top) + 'px';
-
-  const r = await post('/api/to_belt', { x, y });
-  if (!r.ok) { toast(r.error, 3500); return; }
-  toast(`belt: X ${r.x_mm.toFixed(1)} mm, Y ${r.y_mm.toFixed(1)} mm  ·  `
-        + `${r.mm_per_px.toFixed(3)} mm/px here`, 5000);
-});
-
-// ── Save ────────────────────────────────────────────────────────────────────
+// ── Belt map and save ───────────────────────────────────────────────────────
 
 $('btn-map').addEventListener('click', async () => {
   toast('Building belt map…');

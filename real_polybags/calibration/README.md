@@ -1,8 +1,20 @@
 # OVGU AMS — camera calibration
 
-Calibrates the 4-camera conveyor rig (2× Basler GigE, 1× Lucid Triton GigE,
-1× RealSense D435) for **intrinsics**, **extrinsics**, and a shared **metric
-belt-plane** coordinate frame.
+Calibrates the conveyor rig's cameras (2× Basler GigE, 1× Lucid Triton GigE,
+RealSense D435 — five recorded streams) for **intrinsics**, **extrinsics**, and a
+shared **metric belt-plane** coordinate frame.
+
+| document | when to read it |
+|---|---|
+| **[PROCEDURE.md](PROCEDURE.md)** | **doing a calibration** — step by step, with screenshots, in the order the work happens |
+| [USER_MANUAL.md](USER_MANUAL.md) | reference for individual controls, and troubleshooting |
+| [VALIDATION_PLAN.md](VALIDATION_PLAN.md) | establishing a finished calibration is correct, not merely complete |
+| this file | why it is built this way, and how the method itself is verified |
+
+> **No camera on this rig has been calibrated yet.** The only file in `results/`
+> is a synthetic rehearsal artefact, and two of the three camera SDKs are not
+> installed on this machine — see [PROCEDURE.md §0](PROCEDURE.md) for what that
+> means and [§1](PROCEDURE.md) for the route around it.
 
 ## Why this exists
 
@@ -116,19 +128,49 @@ known, so the tool reports the recovered values *against the truth* and the
 result can be verified rather than merely looked at. Worth doing once before
 the lab session, so you arrive knowing the software works.
 
-Workflow: **Setup → Capture → Calibrate → Belt plane → Save.**
+**Two pages, because there are two sittings.** Intrinsics describe the lens and
+can be measured at a desk; extrinsics describe where the camera is bolted and
+need the rig in its final state. Putting both on one page invites the wrong
+order, so they are separate:
+
+`/` — **intrinsics.** Setup → Capture → Calibrate → Belt map → Save.
 
 - **Capture** shows live corner detection and a frame-coverage grid, and
   `Space` grabs a shot so both hands stay on the board.
 - **Calibrate** reports `K`, `D`, per-view error, coverage and tilt — plus a
   direct comparison against known values when the source has them (synthetic
   truth, or RealSense factory intrinsics).
-- **Belt plane** solves the camera pose from the board lying on the belt, then
-  lets you click anywhere on the preview to read that point in belt
-  millimetres. Checking a couple of those against a tape measure is the fastest
-  honest test of the whole chain.
-- **Save** writes `results/<camera>.json` — `K`, `D`, `R`, `t`, both
-  homographies, error figures, the board used, and the image size.
+- **Save** writes `results/<camera>.json` — `K`, `D`, error figures, the board
+  used, and the image size, joined by `R`, `t` and both homographies once the
+  pose is solved.
+
+`/extrinsics` — **the rig page.** A status board over every camera, then the
+solve.
+
+- **The status board** is rebuilt from `results/*.json` on every load and
+  answers one question: what is still outstanding. Each camera reads `blocked`
+  (no intrinsics — bench work first), `ready` (this is the rig work),
+  `provisional` (a tape homography, no distortion correction) or `solved`, with
+  the specific next action spelled out underneath. Read before walking to the
+  rig, it is the difference between one trip and two.
+- **The anticipated measurements** — expected height per camera, planned origin
+  offsets, belt dimensions — are recorded up front and persisted to
+  `results/_plan/rig_plan.json`. This is what makes a solve checkable. A pose is
+  easy to look at and hard to judge alone: 298 mm above the belt reads as an
+  ordinary number until it is set beside the 1400 mm the camera is mounted at.
+  Each solve is reported as measured *versus* anticipated, which catches the one
+  failure that is otherwise undetectable — a board printed at "fit to page",
+  which leaves the reprojection error healthy while every millimetre is wrong by
+  the scale factor. A camera with nothing recorded reports `no ref` rather than
+  passing: an unmade comparison must not look like a successful one.
+- **The solve** reloads that camera's saved intrinsics, prefills the offset from
+  the plan, and then lets you click anywhere on the preview to read that point
+  in belt millimetres. Checking a couple of those against a tape measure is the
+  fastest honest test of the whole chain.
+
+Both pages write the same per-camera file, and a save never discards the other
+half: saving intrinsics at the bench keeps a pose solved earlier at the rig,
+flagging it stale rather than deleting it if the intrinsics changed under it.
 
 Verify the maths independently at any time:
 
@@ -144,6 +186,8 @@ calibration/
   app.py                 Flask server + JSON API
   verify_synthetic.py    intrinsics/extrinsics ground-truth check, no hardware
   verify_beltmap.py      multi-camera belt-map check, no hardware
+  extract_board_frames.py  recorded video -> calibration frames, selected for
+                         pose variety (the route around the missing SDKs)
   boards/                print-ready PDFs + PNGs + machine-readable specs
   core/
     board.py             ChArUco definition, print-ready output, layout checks
@@ -153,8 +197,16 @@ calibration/
     sources.py           synthetic / folder / RealSense / Basler / Lucid
     store.py             results schema (named `store`, not `io` — that would
                          shadow the stdlib module on sys.path)
-  static/                AMS-themed single page (no build step)
+    plan.py              rig plan, status board, measured-vs-anticipated checks
+  static/                AMS-themed pages (no build step)
+    index.html/app.js      intrinsics  (/)
+    extrinsics.html/.js    rig page    (/extrinsics)
+    common.js              shared helpers
+    ams.css                shared theme
   results/               per-camera calibration JSON
+    _plan/rig_plan.json  session plan and anticipated measurements — one
+                         directory down, out of reach of the `results/*.json`
+                         glob that enumerates cameras
 ```
 
 ### The belt map

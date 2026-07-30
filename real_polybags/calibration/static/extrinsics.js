@@ -1,0 +1,383 @@
+/* OVGU AMS calibration tool — extrinsics (rig session) page.
+
+   The rig phase, on its own page because it is its own sitting: intrinsics are
+   bench work that needs no conveyor, extrinsics need the rig in its final state
+   and are void the moment a camera is re-aimed.
+
+   Two things this page does that the intrinsics page cannot:
+   - a status board across ALL cameras, rebuilt from results/*.json, so "what is
+     still outstanding" is answered before walking up to the belt;
+   - anticipated measurements, recorded up front, so each solve is checked
+     against an expectation rather than merely displayed. */
+
+let CONFIG = null;
+let PLAN = null;
+let ROSTER = [];
+let HAVE_EXTRINSICS = false;
+let SESSION_CAMERA = null;
+
+const num = (v) => { const f = parseFloat(v); return Number.isFinite(f) ? f : null; };
+const fmt = (v, unit, d = 0) =>
+  (v === null || v === undefined || !Number.isFinite(v)) ? '—' : `${v.toFixed(d)} ${unit}`;
+
+const STATE_PILL = {
+  solved: 'ok', ready: 'info', provisional: 'warn', blocked: 'idle',
+};
+const STATE_WORD = {
+  solved: 'solved', ready: 'ready', provisional: 'provisional', blocked: 'blocked',
+};
+
+// ── Plan + status board ─────────────────────────────────────────────────────
+
+async function loadPlan() {
+  const r = await api('/api/plan');
+  if (!r.ok) { toast('Could not load the plan: ' + r.error, 5000); return; }
+  PLAN = r.plan;
+  ROSTER = r.roster;
+  if (PLAN.load_error) toast(PLAN.load_error, 6000);
+  renderPlan(r.summary);
+}
+
+function renderPlan(summary) {
+  $('plan-headline').textContent = summary.headline;
+
+  $('belt-w').value = PLAN.belt.width_mm;
+  $('belt-l').value = PLAN.belt.length_mm;
+  document.querySelectorAll('input[name=method]').forEach(el => {
+    el.checked = (el.value === PLAN.method);
+  });
+  syncMethodNote();
+
+  const body = $('roster-body');
+  body.innerHTML = '';
+  ROSTER.forEach((row, i) => {
+    const p = row.plan;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="cam">${esc(row.name)}${row.in_plan ? ''
+        : ' <span class="pill idle" title="has a saved calibration but is not in the plan">unlisted</span>'}${
+        row.synthetic ? ' <span class="pill bad" title="measured from the synthetic camera — a rehearsal result">synthetic</span>' : ''}</td>
+      <td><span class="pill ${STATE_PILL[row.state]}">${STATE_WORD[row.state]}</span></td>
+      <td class="mono">${row.has_intrinsics
+        ? `${row.image_size ? row.image_size.join('×') : '?'} · rms ${
+            Number.isFinite(row.intrinsics_rms_px) ? row.intrinsics_rms_px.toFixed(2) : '?'} px`
+        : '—'}</td>
+      <td class="mono">${Number.isFinite(row.height_above_belt_mm)
+        ? `${row.height_above_belt_mm.toFixed(0)} mm · ${
+            Number.isFinite(row.extr_error_px) ? row.extr_error_px.toFixed(2) : '?'} px`
+        : (row.state === 'provisional' ? 'homography only' : '—')}</td>
+      <td class="anticipated"><input type="number" step="10" size="7" class="cell"
+            data-i="${i}" data-k="expected_height_mm"
+            value="${p.expected_height_mm === null ? '' : p.expected_height_mm}"
+            placeholder="—"></td>
+      <td class="anticipated"><div class="offset-pair">
+        <input type="number" step="1" class="cell" title="X — across the belt"
+            data-i="${i}" data-k="ox" value="${p.origin_offset_mm[0]}">
+        <input type="number" step="1" class="cell" title="Y — along travel"
+            data-i="${i}" data-k="oy" value="${p.origin_offset_mm[1]}">
+      </div></td>
+      <td class="anticipated" style="text-align:center"><input type="checkbox" class="cell"
+            data-i="${i}" data-k="offset_measured"
+            ${p.offset_measured ? 'checked' : ''}></td>
+      <td><button class="ghost small" data-solve="${esc(row.name)}">Solve</button></td>`;
+    body.appendChild(tr);
+
+    if (row.pending.length || row.error) {
+      const pr = document.createElement('tr');
+      pr.className = 'pending';
+      const items = row.error
+        ? [`unreadable calibration file: ${row.error}`]
+        : row.pending;
+      pr.innerHTML = `<td colspan="8"><ul>${
+        items.map(t => `<li>${esc(t)}</li>`).join('')}</ul></td>`;
+      body.appendChild(pr);
+    }
+  });
+
+  body.querySelectorAll('input.cell').forEach(el => {
+    el.addEventListener('change', () => {
+      const p = planEntryFor(el.dataset.i);
+      const k = el.dataset.k;
+      if (k === 'offset_measured') p.offset_measured = el.checked;
+      else if (k === 'ox') p.origin_offset_mm[0] = num(el.value) ?? 0;
+      else if (k === 'oy') p.origin_offset_mm[1] = num(el.value) ?? 0;
+      else p.expected_height_mm = num(el.value);
+      markDirty();
+    });
+  });
+  body.querySelectorAll('button[data-solve]').forEach(el => {
+    el.addEventListener('click', () => {
+      $('camera').value = el.dataset.solve;
+      onCameraPicked();
+      $('camera').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+
+  const sel = $('camera');
+  const keep = sel.value;
+  sel.innerHTML = '';
+  ROSTER.forEach(row => {
+    const o = document.createElement('option');
+    o.value = row.name;
+    o.textContent = `${row.name} — ${STATE_WORD[row.state]}`;
+    sel.appendChild(o);
+  });
+  if (keep && ROSTER.some(r => r.name === keep)) sel.value = keep;
+  onCameraPicked();
+}
+
+/* A roster row is not necessarily a plan entry — a camera with a saved
+   calibration but no plan line is listed too, so the two are indexed by name
+   rather than assumed parallel.
+
+   Typing an anticipated value into an unlisted camera's row adopts it into the
+   plan. The alternative is an input that accepts a number and quietly discards
+   it, which is worse than not offering the input at all. */
+function planEntryFor(rosterIdx) {
+  const name = ROSTER[Number(rosterIdx)].name;
+  let p = PLAN.cameras.find(c => c.name === name);
+  if (!p) {
+    p = { name, expected_height_mm: null, origin_offset_mm: [0, 0],
+          offset_measured: false, note: '' };
+    PLAN.cameras.push(p);
+  }
+  return p;
+}
+
+let DIRTY = false;
+function markDirty() {
+  DIRTY = true;
+  $('btn-save-plan').textContent = 'Save plan •';
+}
+
+function collectPlan() {
+  PLAN.belt.width_mm = num($('belt-w').value) ?? PLAN.belt.width_mm;
+  PLAN.belt.length_mm = num($('belt-l').value) ?? PLAN.belt.length_mm;
+  const m = document.querySelector('input[name=method]:checked');
+  PLAN.method = m ? m.value : 'A';
+  return PLAN;
+}
+
+async function savePlan(quiet) {
+  const r = await post('/api/plan', collectPlan());
+  if (!r.ok) { toast('Could not save the plan: ' + r.error, 5000); return; }
+  PLAN = r.plan; ROSTER = r.roster;
+  DIRTY = false;
+  $('btn-save-plan').textContent = 'Save plan';
+  renderPlan(r.summary);
+  if (!quiet) toast('Plan saved');
+}
+
+$('btn-save-plan').addEventListener('click', () => savePlan(false));
+$('btn-refresh').addEventListener('click', async () => {
+  if (DIRTY) { await savePlan(true); toast('Plan saved and refreshed'); return; }
+  await loadPlan();
+  toast('Refreshed');
+});
+
+$('btn-add-cam').addEventListener('click', async () => {
+  const name = $('new-cam').value.trim();
+  if (!name) { toast('Enter a camera name first', 3000); return; }
+  if (PLAN.cameras.some(c => c.name === name)) {
+    toast(`${name} is already in the plan`, 3000); return;
+  }
+  PLAN.cameras.push({
+    name, expected_height_mm: null, origin_offset_mm: [0, 0],
+    offset_measured: false, note: '',
+  });
+  $('new-cam').value = '';
+  await savePlan(true);
+  toast(`Added ${name}`);
+});
+
+document.querySelectorAll('input[name=method]').forEach(el =>
+  el.addEventListener('change', () => { syncMethodNote(); markDirty(); }));
+$('belt-w').addEventListener('change', markDirty);
+$('belt-l').addEventListener('change', markDirty);
+
+function syncMethodNote() {
+  const m = document.querySelector('input[name=method]:checked');
+  $('method-note').innerHTML = (m && m.value === 'B')
+    ? `<strong>Method B.</strong> Solve the first camera at offset 0, 0 — that
+       <em>defines</em> the belt origin. For every other camera, move the board
+       into its view, measure the displacement from that first placement
+       (X across the belt, Y along travel), and enter it. Accuracy here is your
+       tape measure's accuracy, and it propagates directly into cross-camera
+       agreement.`
+    : `<strong>Method A.</strong> Stop the conveyor, lay the board flat on the
+       belt inside the shared view, and <em>do not move it</em> until every
+       camera has been solved — leaving all offsets at 0. Every camera is then
+       solved against one physical placement, so they share an origin exactly,
+       with no measurement and therefore no measurement error. Use this wherever
+       the cameras can see the same patch of belt.`;
+}
+
+function onCameraPicked() {
+  const name = $('camera').value;
+  const row = ROSTER.find(r => r.name === name);
+  if (!row) return;
+  const p = row.plan;
+  $('ox').value = p.origin_offset_mm[0];
+  $('oy').value = p.origin_offset_mm[1];
+  $('offset-hint').textContent = p.expected_height_mm === null
+    ? 'No expected height recorded for this camera — the solve will not be checkable. Add one in the table above.'
+    : `Expecting roughly ${p.expected_height_mm.toFixed(0)} mm above the belt.`;
+  const b = $('intr-state');
+  if (row.has_intrinsics) {
+    b.className = 'banner ok';
+    b.textContent = `${name} has saved intrinsics (${
+      row.image_size ? row.image_size.join('×') : '?'}) — they will reload when the session starts.`;
+  } else {
+    b.className = 'banner bad';
+    b.textContent = `${name} has no saved intrinsics, so its pose cannot be solved. `
+      + 'Calibrate its lens on the Intrinsics page first — that needs no rig access.';
+  }
+  b.classList.remove('hidden');
+}
+$('camera').addEventListener('change', onCameraPicked);
+
+// ── Session ─────────────────────────────────────────────────────────────────
+
+async function loadConfig() {
+  CONFIG = await api('/api/config');
+  fillSourceAndBoardSelects(CONFIG, $('source'), $('board'));
+  syncSourceUI();
+}
+
+function syncSourceUI() {
+  const opt = $('source').selectedOptions[0];
+  $('source-note').textContent = opt ? opt.dataset.note : '';
+  $('folder-field').style.display = $('source').value === 'folder' ? '' : 'none';
+}
+$('source').addEventListener('change', syncSourceUI);
+
+$('btn-start').addEventListener('click', async () => {
+  const camera = $('camera').value;
+  const r = await post('/api/session', {
+    source: $('source').value, board: $('board').value,
+    camera, folder: $('folder').value,
+  });
+  if (!r.ok) { toast('Could not start: ' + r.error, 5000); return; }
+
+  SESSION_CAMERA = r.camera;
+  HAVE_EXTRINSICS = false;
+  $('checks').innerHTML = '<p class="note">Nothing solved yet in this session.</p>';
+  $('extr-out').innerHTML = '';
+  $('click-hint').classList.add('hidden');
+  $('marker').style.display = 'none';
+  $('hdr-status').textContent = `${r.camera} · ${r.source} · ${r.board}`;
+  // Cache-bust so restarting a session does not reuse the old MJPEG stream.
+  $('stream').src = '/api/stream?t=' + Date.now();
+
+  const loaded = r.loaded_intrinsics;
+  if (loaded && !loaded.error) {
+    $('solve-body').classList.remove('hidden');
+    $('sec-save').classList.remove('hidden');
+    const mismatch = loaded.synthetic && r.source !== 'synthetic';
+    $('intr-state').className = 'banner ' + (mismatch ? 'bad' : 'ok');
+    $('intr-state').textContent = mismatch
+      ? `The saved intrinsics for ${r.camera} were measured from the SYNTHETIC `
+        + `camera, but this session is running on '${r.source}'. They describe a `
+        + `virtual lens, and the resolution matches, so nothing else would catch `
+        + `this. Delete results/${r.camera}.json and calibrate the real lens first — `
+        + `solving is refused until then.`
+      : `Reloaded intrinsics for ${r.camera}: measured ${loaded.created || 'previously'} `
+        + `at ${loaded.image_size[0]}×${loaded.image_size[1]}, RMS ${loaded.rms.toFixed(3)} px`
+        + `${loaded.synthetic ? ' (synthetic — rehearsal only)' : ''}. `
+        + 'Lay the board flat on the belt and solve.';
+    toast(mismatch ? 'Synthetic intrinsics on a real camera — solving is blocked'
+                   : 'Intrinsics reloaded — ready to solve',
+          mismatch ? 8000 : 2600);
+  } else {
+    $('solve-body').classList.add('hidden');
+    $('sec-save').classList.add('hidden');
+    $('intr-state').className = 'banner bad';
+    $('intr-state').textContent = loaded && loaded.error
+      ? loaded.error
+      : `No saved intrinsics for ${r.camera}. Calibrate its lens on the `
+        + 'Intrinsics page first — extrinsics cannot be solved without them.';
+  }
+});
+
+// ── Solve, and check against what was anticipated ───────────────────────────
+
+$('btn-extr').addEventListener('click', async () => {
+  const r = await post('/api/extrinsics', {
+    origin_x_mm: num($('ox').value) ?? 0,
+    origin_y_mm: num($('oy').value) ?? 0,
+  });
+  if (!r.ok) { toast(r.error, 6000); return; }
+  HAVE_EXTRINSICS = true;
+
+  const p = r.camera_position_mm;
+  $('extr-out').innerHTML = `
+    <div class="stat"><span class="k">camera position (belt frame)</span>
+      <span class="v">[${p.map(v => v.toFixed(0)).join(', ')}] mm</span></div>
+    <div class="stat"><span class="k">points used</span><span class="v">${r.n_points}</span></div>
+    ${(r.warnings || []).map(w =>
+      `<div class="note" style="color:var(--warn)">${esc(w)}</div>`).join('')}`;
+
+  renderChecks(r);
+  $('click-hint').classList.remove('hidden');
+  $('click-hint').textContent =
+    'Click anywhere on the preview to read that point in belt millimetres — '
+    + 'two points a known distance apart, against a tape, tests the whole chain.';
+
+  const v = r.verdict;
+  toast(v === 'bad' ? 'Solved, but a check failed — read the panel before saving'
+      : v === 'warn' ? 'Solved with a warning'
+      : v === 'unset' ? 'Solved — but nothing to check it against'
+      : 'Solved, all checks passed',
+    v === 'ok' ? 3000 : 6000);
+});
+
+function renderChecks(r) {
+  const rows = (r.checks || []).map(c => `
+    <tr class="chk ${c.status}">
+      <td>${esc(c.label)}</td>
+      <td class="mono">${esc(c.measured)}</td>
+      <td class="mono">${esc(c.expected)}</td>
+      <td class="mono">${esc(c.delta)}</td>
+      <td><span class="pill ${c.status === 'unset' ? 'idle' : c.status}">${
+        c.status === 'unset' ? 'no ref' : c.status}</span></td>
+    </tr>` + (c.hint ? `<tr class="chk-hint"><td colspan="5">${esc(c.hint)}</td></tr>` : ''))
+    .join('');
+  $('checks').innerHTML = `
+    <div class="tablewrap"><table class="checks">
+      <thead><tr><th>check</th><th>measured</th><th>anticipated</th><th>Δ</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+$('stream').addEventListener('click', async (e) => {
+  if (!HAVE_EXTRINSICS) return;
+  const img = e.target;
+  const rect = img.getBoundingClientRect();
+  // The preview is scaled to fit; convert back to native pixel coordinates,
+  // otherwise every clicked point would be wrong by the display scale factor.
+  const x = (e.clientX - rect.left) * (img.naturalWidth / rect.width);
+  const y = (e.clientY - rect.top) * (img.naturalHeight / rect.height);
+
+  const m = $('marker');
+  m.style.display = 'block';
+  m.style.left = (e.clientX - rect.left) + 'px';
+  m.style.top = (e.clientY - rect.top) + 'px';
+
+  const r = await post('/api/to_belt', { x, y });
+  if (!r.ok) { toast(r.error, 3500); return; }
+  toast(`belt: X ${r.x_mm.toFixed(1)} mm, Y ${r.y_mm.toFixed(1)} mm  ·  `
+        + `${r.mm_per_px.toFixed(3)} mm/px here`, 5000);
+});
+
+$('btn-save').addEventListener('click', async () => {
+  const r = await post('/api/save', { notes: $('notes').value });
+  if (!r.ok) { toast(r.error, 4000); return; }
+  toast('Saved to ' + r.path, 4000);
+  // The status board is the point of this page, so it must reflect the save
+  // immediately — the next camera is chosen from it.
+  await loadPlan();
+  if (SESSION_CAMERA) $('camera').value = SESSION_CAMERA;
+  onCameraPicked();
+});
+
+loadConfig().then(loadPlan);
