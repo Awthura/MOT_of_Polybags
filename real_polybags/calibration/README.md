@@ -202,6 +202,22 @@ the rig page takes a top-down map of whatever plane a rig watches — a floor
 plan, a CAD export, an overhead photo (`.png`/`.jpg`) or a scan (`.glb`) — and
 renders footprints, coverage and overlap against it.
 
+**Board-free extrinsics.** With a georeferenced map in hand, panel B3 solves a
+camera's plane mapping from **one frame and a handful of clicked point pairs**
+— a feature in the image, the same feature on the map. No board, no rig visit,
+and it works on footage already recorded. With intrinsics the homography is
+decomposed into a real `R`/`t` (verified against a known camera: position to
+0.24 mm, held-out points to 0.05 mm); without them it degrades explicitly to a
+plane mapping with no camera position, and the stored correspondences mean
+re-solving after measuring the lens costs no re-clicking.
+
+Points are fitted with RANSAC and each one's error is reported in millimetres,
+so a mis-click is rejected *and named* rather than quietly bending the fit —
+measured, one bad point costs 0.04 mm RMS here against 261 mm for a plain
+least-squares fit. Four pairs determine a homography exactly and therefore
+prove nothing; the panel says so instead of letting a zero residual read as a
+perfect result.
+
 A GLB georeferences itself: glTF fixes lengths at metres and defines an
 origin, so scale and world origin come out of the file with nothing to click.
 A PNG carries no units and must be told two things — where world (0, 0) sits,

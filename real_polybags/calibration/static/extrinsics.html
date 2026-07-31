@@ -182,6 +182,67 @@
     </div>
   </section>
 
+  <!-- B3 · Map correspondences -->
+  <section class="panel">
+    <h2><span class="step">B3</span> Solve from map points
+      <span class="pill idle">board-free</span></h2>
+    <p class="note" style="margin-top:0">
+      The alternative to laying a board on the plane: freeze <strong>one frame
+      per camera</strong>, click points you can identify in both the frame and
+      the map above, and solve the image&rarr;world mapping directly. Needs no
+      rig visit and works on footage already recorded. Requires a georeferenced
+      map (B2).
+    </p>
+
+    <div class="row">
+      <div class="field">
+        <label for="corr-camera">Camera</label>
+        <select id="corr-camera"></select>
+      </div>
+      <button id="btn-corr-grab">Freeze current frame</button>
+      <button id="btn-corr-solve" class="accent">Solve</button>
+      <button id="btn-corr-save" class="accent" disabled>Save as extrinsics</button>
+      <button id="btn-corr-undo" class="ghost">Undo last pair</button>
+      <button id="btn-corr-clear" class="ghost">Clear pairs</button>
+    </div>
+    <div id="corr-state" class="banner hidden"></div>
+
+    <div class="split hidden" id="corr-body" style="margin-top:12px">
+      <div>
+        <strong class="caps">Camera frame — click a feature</strong>
+        <div id="corr-viewport" style="position:relative;background:#111;
+             border-radius:var(--radius);overflow:auto;max-height:460px;margin-top:6px">
+          <img id="corr-img" style="display:block;max-width:100%;cursor:crosshair"
+               alt="frozen camera frame">
+        </div>
+        <p class="note" id="corr-hint">
+          Freeze a frame to begin. Then click a feature here, and the same
+          feature on the map — that is one pair.
+        </p>
+      </div>
+      <div>
+        <strong class="caps">Pairs</strong>
+        <div class="tablewrap" style="margin-top:6px;max-height:280px;overflow-y:auto">
+          <table class="roster" id="corr-table">
+            <thead><tr><th>#</th><th>image px</th><th>world mm</th>
+              <th>error</th><th></th></tr></thead>
+            <tbody id="corr-rows"></tbody>
+          </table>
+        </div>
+        <p class="note">
+          Four pairs is the minimum, but four fit exactly and prove nothing —
+          a fifth is what first gives a real error estimate. Spread them across
+          the area you care about: points clustered in one corner give a fit
+          that is excellent there and arbitrarily wrong elsewhere.
+        </p>
+        <div id="corr-result"></div>
+        <div class="row hidden" id="corr-validate-row" style="margin-top:10px">
+          <button id="btn-corr-validate" class="ghost small">Validate: click the frame</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- C · Solve -->
   <section class="panel">
     <h2><span class="step">C</span> Solve a camera's belt pose</h2>

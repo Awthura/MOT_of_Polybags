@@ -430,6 +430,63 @@ georeferencing is right.
 > they are rig-specific and can be large. The directory and `*.glb` are
 > gitignored.
 
+### B3 · Solving from map points — the board-free route
+
+*Requires a georeferenced map (B2). An alternative to panel C, not an
+addition: either route produces the same kind of result and both are stored
+identically.*
+
+Instead of laying a board on the plane for every camera, this needs **one map
+and one frame per camera**. Click a feature you can identify in the camera
+frame, click the same feature on the map, repeat a handful of times, solve.
+
+That difference matters more than it sounds:
+
+- **No rig visit.** The frame can come from footage recorded months ago.
+- **No board.** Nothing has to be printed, placed, or kept still.
+- **Nothing to coordinate.** Cameras are solved independently, whenever.
+
+```
+1. B2 -> upload and georeference the map (once for the whole rig)
+2. Start a session for the camera (any source, including Folder)
+3. B3 -> Freeze current frame
+4. Click a feature on the frame, then the same feature on the map
+   -> repeat, 5-8 times, spread across the area you care about
+5. Solve -> read the per-point errors
+6. Validate -> click anywhere on the frame, check the answer against the map
+7. Save as extrinsics
+```
+
+**Four pairs is the minimum and is not enough.** A plane homography has eight
+degrees of freedom, so four point pairs determine it exactly — the residuals
+come back as zero by construction and tell you nothing. The fifth point is
+the first one that measures anything. The panel says so rather than letting a
+zero read as perfect.
+
+**Spread matters more than count.** Points clustered in one corner produce a
+fit that is excellent there and arbitrarily wrong everywhere else. Five
+well-spread points beat fifteen bunched ones.
+
+**A mis-click is caught, named, and excluded.** Points are fitted with RANSAC,
+so one bad correspondence is rejected rather than bending the whole solution,
+and the table shows each point's error in millimetres with outliers marked.
+Measured on synthetic ground truth: with one badly mis-clicked point, this
+route lands 0.04 mm RMS where a plain least-squares fit lands 261 mm. You are
+told *which* point disagrees instead of deleting points until the number
+improves.
+
+**With intrinsics you get a full pose.** The homography is decomposed into a
+real `R`/`t`, so the camera gets a position and height, distortion is
+corrected, and the result is `solved` — indistinguishable downstream from a
+board calibration. Verified against a known camera: position recovered to
+0.24 mm, held-out points to 0.05 mm.
+
+**Without intrinsics it degrades honestly.** You still get a usable plane
+mapping, but distortion is uncorrected and there is no camera position. It is
+recorded as `provisional`, and — because the clicked points are stored in the
+calibration file — measuring the lens later and re-solving needs **no
+re-clicking**.
+
 ### B, C, D · Session parameters, solve, save
 
 **B** sets the origin method (below) and the belt dimensions, which the belt map
@@ -673,6 +730,11 @@ end up sharing one serial, the rig status board says so.
 | "not a GLB file (bad magic…)" | You exported `.gltf` (JSON + separate files) rather than `.glb` (single binary). Re-export as binary. |
 | Belt map grid is too dense or too sparse | It adapts to the map extent automatically. If it looks wrong, the scale is probably wrong — check mm-per-pixel against a known distance. |
 | World origin cross is not where you expect | The origin click or the scale is off. Re-click the origin; both can be redone at any time without re-uploading. |
+| B3: "upload and georeference a workspace map first" | The board-free route reads world coordinates off the map, so B2 must have both an origin and a scale. |
+| B3: a point shows ✕ and a large error | RANSAC rejected it as an outlier — one of its two clicks is on the wrong feature. Delete that row and re-click it; the rest of the fit is unaffected. |
+| B3: RMS is large but no point is marked ✕ | The errors are spread rather than isolated: usually the points are clustered in one region, or the map's scale is wrong. Add points further apart and re-check mm-per-pixel. |
+| B3: residuals are all exactly 0 | You have exactly 4 pairs — they fit perfectly by construction. Add a fifth to get a real error estimate. |
+| B3 solve refuses on resolution | The frozen frame is a different size than the saved intrinsics were measured at. Grab the frame at the calibrated resolution. |
 
 ---
 

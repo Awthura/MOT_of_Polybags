@@ -144,6 +144,9 @@ function renderPlan(summary) {
   });
   if (keep && ROSTER.some(r => r.name === keep)) sel.value = keep;
   onCameraPicked();
+  // Keep the correspondence-route picker on the same roster, so a camera
+  // added or cleared above shows up there without a reload.
+  if (typeof corrCameras === 'function') corrCameras();
 }
 
 /* A roster row is not necessarily a plan entry — a camera with a saved
@@ -652,4 +655,210 @@ $('ws-img').addEventListener('load', () => {
   if (WS) placeMarker('ws-marker-origin', WS.origin_px);
 });
 
-loadConfig().then(loadPlan).then(loadWorkspace);
+// ── Point correspondences (one map + one frame per camera) ──────────────────
+// The board-free extrinsics route. Click a feature on the frozen camera frame,
+// then the same feature on the workspace map above; four such pairs determine
+// the plane mapping, and more make it measurable. World coordinates come from
+// the map's georeference, so B2 must be complete first.
+
+let CORR = { pairs: [], pending: null, imageSize: null, solved: false };
+let CORR_VALIDATING = false;
+
+function corrCameras() {
+  const sel = $('corr-camera');
+  const keep = sel.value;
+  sel.innerHTML = '';
+  ROSTER.forEach(row => {
+    const o = document.createElement('option');
+    o.value = row.name;
+    o.textContent = `${row.name}${row.has_intrinsics ? '' : ' — no intrinsics'}`;
+    sel.appendChild(o);
+  });
+  if (keep && ROSTER.some(r => r.name === keep)) sel.value = keep;
+}
+
+function corrRender() {
+  const rows = $('corr-rows');
+  rows.innerHTML = '';
+  CORR.pairs.forEach((p, i) => {
+    const tr = document.createElement('tr');
+    const err = p.residual_mm === undefined ? '—'
+      : `${p.residual_mm.toFixed(0)} mm`;
+    const cls = p.inlier === false ? ' style="color:var(--bad)"' : '';
+    tr.innerHTML = `<td>${i + 1}</td>
+      <td class="mono">${p.image.map(v => v.toFixed(0)).join(', ')}</td>
+      <td class="mono">${p.world.map(v => v.toFixed(0)).join(', ')}</td>
+      <td class="mono"${cls}>${err}${p.inlier === false ? ' ✕' : ''}</td>
+      <td><button class="danger small" data-drop="${i}">×</button></td>`;
+    rows.appendChild(tr);
+  });
+  rows.querySelectorAll('button[data-drop]').forEach(b =>
+    b.addEventListener('click', () => {
+      CORR.pairs.splice(Number(b.dataset.drop), 1);
+      CORR.solved = false;
+      $('btn-corr-save').disabled = true;
+      corrRender();
+    }));
+
+  const n = CORR.pairs.length;
+  const half = CORR.pending ? ' · one half-finished pair — now click the map' : '';
+  $('corr-hint').textContent =
+    `${n} pair${n === 1 ? '' : 's'}${half}. `
+    + (n < 4 ? `Need at least ${4 - n} more before solving.`
+             : n === 4 ? 'Four is the minimum — a fifth gives a real error estimate.'
+                       : 'Click the frame, then the matching point on the map.');
+}
+
+function corrBanner(cls, text) {
+  const b = $('corr-state');
+  b.className = 'banner ' + cls;
+  b.classList.remove('hidden');
+  b.textContent = text;
+}
+
+function corrReady() {
+  if (!WS || !WS.is_georeferenced) {
+    corrBanner('warn', 'Upload and georeference a workspace map in B2 first — '
+      + 'without a scale and origin there are no world coordinates to click.');
+    return false;
+  }
+  return true;
+}
+
+$('btn-corr-grab').addEventListener('click', async () => {
+  if (!corrReady()) return;
+  const r = await post('/api/correspondence/frame', {});
+  if (!r.ok) { toast(r.error, 6000); return; }
+  $('corr-img').src = 'data:image/png;base64,' + r.png;
+  CORR = { pairs: [], pending: null, imageSize: r.image_size, solved: false };
+  $('corr-camera').value = r.camera;
+  $('corr-body').classList.remove('hidden');
+  $('btn-corr-save').disabled = true;
+  $('corr-result').innerHTML = '';
+  $('corr-validate-row').classList.add('hidden');
+  corrBanner('ok', `Frozen a frame from ${r.camera} `
+                 + `(${r.image_size[0]}×${r.image_size[1]}). Now click matching `
+                 + `points on the frame and the map.`);
+  corrRender();
+});
+
+$('corr-img').addEventListener('click', async (e) => {
+  const img = e.target;
+  const rect = img.getBoundingClientRect();
+  const k = img.naturalWidth / rect.width;
+  const p = [(e.clientX - rect.left) * k, (e.clientY - rect.top) * k];
+
+  if (CORR_VALIDATING) {
+    CORR_VALIDATING = false;
+    $('corr-viewport').classList.remove('picking');
+    const v = await post('/api/correspondence/validate', { x: p[0], y: p[1] });
+    if (!v.ok) { toast(v.error, 5000); return; }
+    toast(`that pixel is world X ${v.x_mm.toFixed(0)} mm, Y ${v.y_mm.toFixed(0)} mm`
+          + ' — check it against the map', 7000);
+    return;
+  }
+  if (!corrReady()) return;
+  CORR.pending = p;
+  corrRender();
+  toast('Now click the same feature on the workspace map above', 4000);
+});
+
+/* The map click completes a pair. Registered here rather than in the B2
+   handler so the map keeps its own georeferencing behaviour untouched. */
+$('ws-img').addEventListener('click', (e) => {
+  if (WS_PICK || !CORR.pending || !WS || !WS.is_georeferenced) return;
+  const img = e.target;
+  const rect = img.getBoundingClientRect();
+  const k = img.naturalWidth / rect.width;
+  const mapPx = [(e.clientX - rect.left) * k, (e.clientY - rect.top) * k];
+  // Map pixels -> world mm, using the same georeference the server holds.
+  const world = [(mapPx[0] - WS.origin_px[0]) * WS.mm_per_px,
+                 (mapPx[1] - WS.origin_px[1]) * WS.mm_per_px];
+  CORR.pairs.push({ image: CORR.pending, world });
+  CORR.pending = null;
+  CORR.solved = false;
+  $('btn-corr-save').disabled = true;
+  corrRender();
+});
+
+$('btn-corr-undo').addEventListener('click', () => {
+  if (CORR.pending) CORR.pending = null;
+  else CORR.pairs.pop();
+  CORR.solved = false;
+  $('btn-corr-save').disabled = true;
+  corrRender();
+});
+
+$('btn-corr-clear').addEventListener('click', () => {
+  CORR.pairs = [];
+  CORR.pending = null;
+  CORR.solved = false;
+  $('btn-corr-save').disabled = true;
+  $('corr-result').innerHTML = '';
+  corrRender();
+});
+
+$('btn-corr-solve').addEventListener('click', async () => {
+  if (!corrReady()) return;
+  if (CORR.pairs.length < 4) {
+    toast(`Need at least 4 pairs, have ${CORR.pairs.length}`, 4000); return;
+  }
+  const r = await post('/api/correspondence/solve', {
+    camera: $('corr-camera').value,
+    pairs: CORR.pairs.map(p => ({ image: p.image, world: p.world })),
+    image_size: CORR.imageSize,
+  });
+  if (!r.ok) { toast(r.error, 7000); return; }
+
+  CORR.pairs.forEach((p, i) => {
+    p.residual_mm = r.residuals_mm[i];
+    p.inlier = r.inliers[i] === 1;
+  });
+  CORR.solved = true;
+  $('btn-corr-save').disabled = false;
+  $('corr-validate-row').classList.remove('hidden');
+  corrRender();
+
+  const pos = r.camera_position_mm;
+  const cls = r.rms_mm < 20 ? 'ok' : r.rms_mm < 60 ? 'warn' : 'bad';
+  $('corr-result').innerHTML = `
+    <div class="stat"><span class="k">RMS on the plane</span>
+      <span class="v">${r.rms_mm.toFixed(1)} mm
+      <span class="pill ${cls}">${cls === 'ok' ? 'good' : cls}</span></span></div>
+    <div class="stat"><span class="k">worst inlier</span>
+      <span class="v">${r.max_mm.toFixed(1)} mm</span></div>
+    <div class="stat"><span class="k">points used</span>
+      <span class="v">${r.n_inliers} of ${r.n_points}</span></div>
+    ${r.used_intrinsics && Number.isFinite(pos[2])
+      ? `<div class="stat"><span class="k">camera height</span>
+           <span class="v">${Math.abs(pos[2]).toFixed(0)} mm</span></div>`
+      : `<div class="note">No intrinsics for this camera — the plane mapping
+           is solved, but distortion is uncorrected and there is no camera
+           position.</div>`}
+    ${(r.warnings || []).map(w =>
+       `<div class="note" style="color:var(--warn)">${esc(w)}</div>`).join('')}`;
+
+  corrBanner(cls === 'bad' ? 'bad' : 'ok',
+    `Solved ${$('corr-camera').value}: ${r.rms_mm.toFixed(1)} mm RMS across `
+    + `${r.n_inliers} of ${r.n_points} points. Validate a point before saving.`);
+  toast(`Solved — ${r.rms_mm.toFixed(1)} mm RMS`, 5000);
+});
+
+$('btn-corr-validate').addEventListener('click', () => {
+  CORR_VALIDATING = true;
+  $('corr-viewport').classList.add('picking');
+  toast('Click any point on the frame — its world coordinates come back', 5000);
+});
+
+$('btn-corr-save').addEventListener('click', async () => {
+  const r = await post('/api/correspondence/save', {
+    notes: 'solved from workspace-map correspondences',
+  });
+  if (!r.ok) { toast(r.error, 5000); return; }
+  toast('Saved to ' + r.path, 4000);
+  PLAN = r.plan; ROSTER = r.roster;
+  renderPlan(r.summary);
+  corrCameras();
+});
+
+loadConfig().then(loadPlan).then(loadWorkspace).then(corrCameras);
