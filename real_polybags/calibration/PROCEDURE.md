@@ -16,31 +16,34 @@ see [USER_MANUAL.md](USER_MANUAL.md); for checking the result afterwards see
 
 ## 0. The state of play today
 
+*(Updated 2026-07-31 after the first live session.)*
+
 Before planning a session, three facts about this machine and this repository.
 
-**One calibration file exists, and it is a rehearsal artefact.**
+**Two real calibrations exist; a session was run 2026-07-31.** `basler_1` and
+`basler_2` have board-fitted intrinsics in `results/` — measured live, at
+**full sensor resolution** (2046×1080 and 1920×1200), not the 1280×720 the
+recorder scripts default to. That resolution question is now the open decision
+gating the extrinsics phase; see §4.3's warning and the notes inside each
+record. `lucid` and the RGBD stream(s) are still uncalibrated. Any *synthetic*
+rehearsal record must still be deleted before real work (§3.4) — the status
+board flags them `SYNTHETIC` and the tool refuses to solve poses against them.
 
+**All three camera SDKs are installed — in the `ams` conda env, and only
+there.** An earlier revision of this section claimed pypylon and pyrealsense2
+were missing; that was probed against the wrong interpreter (Homebrew
+`python3`). Run the app with the env that actually has them:
+
+```bash
+/opt/anaconda3/envs/ams/bin/python app.py          # Basler + Lucid live
+sudo /opt/anaconda3/envs/ams/bin/python app.py     # required for RealSense (USB power state)
 ```
-results/basler_1.json     source: "synthetic"     1280x720
-```
 
-It was produced by the virtual camera. It must be deleted before real work
-(§3.4). This matters more than it sounds: the synthetic source renders at
-1280×720, exactly what the rig records at, so the tool's resolution guard cannot
-catch it. The rig page reloads saved intrinsics automatically, so without
-intervention a real camera's pose would be solved against a virtual lens, and
-every number downstream would be wrong with nothing looking unusual.
-
-There is now a guard for precisely this — a `SYNTHETIC` flag on the status board
-and a hard refusal to solve — but the file should still go.
-
-**Two of the three camera SDKs are not installed here.**
-
-| source | status | consequence |
+| source | status | notes |
 |---|---|---|
-| `pypylon` (Basler) | **not installed** | the app cannot open `basler_1` / `basler_2` directly |
-| `pyrealsense2` (RealSense) | **not installed** | no live D435, and no factory-intrinsics cross-check |
-| Aravis / `gi` (Lucid) | present | live Lucid possible, camera permitting |
+| `pypylon` (Basler) | in `ams` env | live capture verified 2026-07-31 |
+| Aravis / `gi` (Lucid) | in `ams` env | GigE Vision allows **one controlling process per camera** — close other viewers/recorders first, or every setting write fails read-only |
+| `pyrealsense2` (RealSense) | in `ams` env | **no frames without `sudo`** — fails silently otherwise; use the factory-intrinsics shortcut once connected |
 | synthetic, folder | always available | — |
 
 **Footage already exists.** `real_polybags/experiments/**` holds real recordings
@@ -58,9 +61,9 @@ board and come from the camera at the resolution you record at.
 
 | | what you get | needs | verdict |
 |---|---|---|---|
-| **A · Live in the app** | intrinsics + extrinsics | `pypylon` / `pyrealsense2` installed, cameras connected, rig time for everything | blocked today for Basler and RealSense |
-| **B · Record → extract → Folder source** | intrinsics + extrinsics | the existing recorder (already works), rig time only for the board | **recommended** |
-| **C · RealSense factory intrinsics** | intrinsics for the D435 only | `pyrealsense2`, camera connected | do it when the SDK is installed — it is the only independent check on the method |
+| **A · Live in the app** | intrinsics + extrinsics | the `ams` env python, cameras connected (`sudo` for RealSense), rig time for everything | **works** — this is how the Baslers were calibrated 2026-07-31. Note: live sources capture at whatever resolution the camera is set to (full sensor), not the recorder's 1280×720 |
+| **B · Record → extract → Folder source** | intrinsics + extrinsics | the existing recorder (already works), rig time only for the board | equally good, and guarantees the calibration matches the recording resolution — prefer it if the answer to the resolution question (§4.3) is 1280×720 |
+| **C · RealSense factory intrinsics** | intrinsics for the D435 only | `sudo` + camera connected | **fastest path for the D435** — one click, no board; also the only independent check on the method |
 | **D · Tape-measure homography** | a `provisional` plane mapping, no intrinsics | one frame of existing footage + a tape measure | fallback with no rig and no board; lens distortion stays uncorrected |
 
 ### Why Route B
@@ -165,6 +168,11 @@ familiar.
 rm -f results/*.json          # removes the synthetic basler_1.json too
 ```
 
+Or in-app: type the camera name in Setup and press **Clear saved
+calibration** — the same operation, no terminal needed. Either way, confirm
+before doing it; it removes the whole saved record, intrinsics and any pose
+together, and cannot be undone.
+
 Rehearsal results are indistinguishable from real ones at a glance, and the app
 reloads them automatically. The status board marks them `SYNTHETIC` and the tool
 refuses to solve a real pose against them, but the clean move is to delete them.
@@ -195,6 +203,15 @@ python3 record_all_5_cameras_macos.py --duration 90 --fps 15 \
 resolution-specific: the Basler a2A1920 has a 1920×1200 sensor while this rig
 records 1280×720, so the camera is cropping or scaling, and a `K` measured at one
 resolution does not transfer to the other.
+
+**Note which physical camera is which.** The recorder assigns `basler_1` /
+`basler_2` purely by enumeration order — there is no serial pinned to either
+name — and prints each device's serial at record time
+(`[Basler_1] Pre-initialized: ... (S/N: ...)`). **Write those two serials
+down.** When the extracted frames are later fed through the calibration app's
+Folder source (§4.3), there is no live camera to confirm identity from, so
+this console output is the only record of which serial ended up in which
+video file.
 
 While recording, for ~90 s:
 
@@ -242,7 +259,13 @@ Use `--board large` for `basler_2`, `lucid` and the RealSense streams.
 ### 4.3 Calibrate and save
 
 In the app: camera name (exactly the stream name), source **Folder of images**,
-folder `frames/basler_1`, matching board, **Start session**.
+folder `frames/basler_1`, matching board. A **Device** field also appears here
+if you typed one — enter the serial the recorder printed for this camera
+(§4.1) before pressing **Start session**; there is no live hardware for this
+route to confirm it against, so it is recorded as *operator-asserted* rather
+than hardware-confirmed, and shown that way on the status board. Skip it if
+you didn't note the serial — the calibration still works, just without that
+extra cross-check.
 
 A **Capture all frames** button appears for folder sources. Use it rather than
 clicking *Capture shot* repeatedly: the preview cycles a folder at 15 fps, so a
@@ -511,6 +534,8 @@ different `K`, and the status board lists it as outstanding until re-solved.
       recorded
 - [ ] held-out board agreement measured at 3–4 positions and **written down**
 - [ ] notes in each record sufficient to reproduce it
+- [ ] no two camera names on the status board share a device serial — if they
+      do, one of them is the wrong physical camera under the wrong name
 
 ---
 

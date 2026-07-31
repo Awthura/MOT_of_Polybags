@@ -135,6 +135,7 @@ so they can never be confused with one another.
 |---|---|
 | **Camera name** | Identifies the calibration. Use the recording names: `basler_1`, `basler_2`, `lucid`, `rgbd_1`. Saved as `results/<name>.json`. |
 | **Frame source** | `Synthetic` (no hardware), `Folder` (existing images), or a live camera. |
+| **Device** | Only shown when more than one physical unit of that kind is connected — see below. |
 | **Board** | Must match the board you are physically holding. |
 
 Press **Start session**. The live preview appears with a green overlay on
@@ -142,6 +143,32 @@ detected corners and a running corner count.
 
 > If a camera source says "SDK present — camera must be connected" but starting
 > fails, the SDK is installed and the camera is not reachable. See §7.
+
+**A camera name is a label you type; it is not the same thing as a physical
+camera.** This rig has two Basler units, and `record_all_5_cameras_macos.py`
+tells them apart from `basler_2` by nothing more than which one
+`EnumerateDevices()` happens to return first — there is no serial permanently
+pinned to either name. If two Baslers (or two RealSense units) are connected,
+the **Device** field appears and lists each by serial number; you must pick
+one rather than the tool guessing. With exactly one device of a kind
+connected, there is nothing to choose and the field stays hidden.
+
+Once a session starts, the page shows which physical unit it actually
+connected to — **"Connected: S/N 24681012 (acA1920-40gc)"** — and that serial
+is written into the saved calibration for traceability. If two saved
+calibrations ever end up carrying the *same* serial under two different
+camera names, the rig status board (§4b) flags it: that is either the same
+camera calibrated twice under two names, or two results cross-attributed, and
+either way something downstream would use the wrong pose for one of them.
+
+**Route B has no live device to ask** (§1's recommended path when
+`pypylon`/`pyrealsense2` are not installed): a folder of extracted frames
+carries no hardware identity at all. Typing a serial into the Device field
+before starting a folder session still works — it is recorded as
+**operator-asserted**, not hardware-confirmed, and shown that way everywhere
+it appears. Read it off the recorder's own console output, which already
+prints each camera's serial at record time
+(`[Basler_1] Pre-initialized: ... (S/N: ...)`).
 
 ### Step 2 — Capture (intrinsics)
 
@@ -198,6 +225,50 @@ camera's true parameters, or the RealSense's factory intrinsics. This is the
 only way to distinguish a *correct* calibration from a merely *plausible* one.
 Green means agreement.
 
+### Shortcut — using the RealSense's own factory intrinsics
+
+The D435 reports its own `fx, fy, ppx, ppy` and distortion model directly from
+the sensor — the only camera on this rig with independent ground truth. When a
+RealSense session starts, a green banner offers **Use factory intrinsics**:
+click it and those numbers are adopted immediately, with no board capture at
+all.
+
+The results panel looks the same as a board fit, except there is no RMS or
+frame coverage to show — a factory number was never fitted here, so the panel
+says so rather than displaying a zero that would read as suspiciously
+perfect. Save it exactly like a board result; the saved record marks
+`"method": "factory"` under `intrinsics`, and the rig status board shows a
+`factory` tag instead of an RMS figure for that camera.
+
+**Do the board-fit comparison at least once first.** Calibrating the
+RealSense from a board and checking it *against* the factory numbers (the "vs
+known reference" panel above) is the acceptance test for this tool's method —
+it is the only camera on the rig where an independent answer exists to check
+against. Once that agreement is established, adopting the factory numbers
+directly is the fast path for every session after.
+
+Refused if the sensor reports a distortion model this tool cannot represent
+(anything other than Brown-Conrady) — a fisheye model pushed through the same
+undistortion code would produce a plausible-looking but wrong result, with
+nothing downstream able to tell.
+
+### Clearing a saved calibration
+
+Both pages have a way to delete a camera's saved result outright — intrinsics
+and any pose together, since `results/<camera>.json` holds both halves and
+there is no smaller unit to remove.
+
+- **Intrinsics page (Setup):** type the camera name and press **Clear saved
+  calibration**. Works even before starting a session — useful for wiping a
+  stale result ahead of time.
+- **Rig page (status board):** each row has its own **Clear** button, greyed
+  out when there is nothing saved for that camera.
+
+Both ask for confirmation first and cannot be undone. This is the in-app form
+of `rm results/<camera>.json` — most useful for clearing the synthetic
+rehearsal result before real work (§3.4) or for discarding a bad calibration
+to force a clean redo.
+
 ### Step 4 — Belt plane (extrinsics) → the rig page
 
 Extrinsics have **their own page**, at `/extrinsics` — the *Extrinsics* link in
@@ -248,13 +319,24 @@ headline counts it up: *"1 of 5 cameras solved · 1 ready to solve now."* Read i
 before walking to the rig — it is the difference between one trip and two.
 
 Cameras with a saved calibration that are not in the plan are listed anyway,
-marked `unlisted`, so a result can never be invisible here.
+marked `unlisted`, so a result can never be invisible here. A camera whose
+intrinsics were adopted from a sensor's factory calibration rather than fitted
+here (§4, "Shortcut") shows a `factory` tag in the Intrinsics column instead
+of an RMS figure. A rehearsal result from the synthetic camera is flagged
+`SYNTHETIC` in red — clear it (below) before real work.
 
 > **Camera names are load-bearing.** A calibration is joined to detections by
 > name, so `results/<name>.json` must use the same name the recorder writes its
 > video under — `basler_1`, `rgbd_2_color`, and so on. A calibration filed under
 > a name nothing else uses is invisible to everything downstream, and nothing
 > will report that: it simply never matches.
+
+> **But a name is not a physical camera.** Under the camera name, the board
+> also shows the **device serial** the calibration was actually measured
+> from — the one piece of identity that comes from the hardware itself rather
+> than from what an operator typed. If the same serial turns up under two
+> different camera names, both rows say so: that pairing needs checking before
+> either result is trusted (§6).
 
 ### The anticipated measurements
 
@@ -291,6 +373,62 @@ millimetre the camera reports is wrong by the scale factor.
 
 A camera with no expected height recorded reports `no ref` rather than passing.
 An unmade comparison should not look like a successful one.
+
+### B2 · The workspace map — using this tool on any rig
+
+*Optional, and purely additive: without it the belt width and length in panel
+B define the map exactly as before.*
+
+Nothing about the geometry here is specific to a conveyor. Every camera is
+solved against **one shared plane**; that the plane happens to be a belt is a
+naming convention, not a constraint. Upload a top-down map of whatever plane
+your rig watches and the footprints, coverage and overlap render against it
+instead of a blank rectangle.
+
+**Two upload formats, and the difference matters:**
+
+| | georeferencing | when to use |
+|---|---|---|
+| `.png` / `.jpg` | **by hand** — click the origin, set the scale | a floor plan, a CAD screenshot, a stitched overhead photo |
+| `.glb` | **automatic** — from the model itself | a 3-D scan or CAD export of the cell |
+
+A **GLB carries its own units**: glTF fixes lengths at metres and defines an
+origin, so the scale is exact and the world origin is the model's origin.
+Nothing to click, nothing to measure, no chance of a mis-clicked datum. That
+is the one real advantage of the format and the reason it is worth supporting
+— if you can export a scan as GLB, prefer it.
+
+A **PNG is a picture until you georeference it.** An image file carries no
+units, so two things have to be supplied:
+
+1. **The origin** — click the point that is world (0, 0). Choose something
+   you can also identify physically on the rig: a bolt, a frame corner, a
+   marked datum. This is the point every camera's extrinsics will be
+   expressed relative to.
+2. **The scale** — either type mm-per-pixel, or click two points and enter
+   the distance between them measured with a tape. The second is preferred
+   for the same reason the rest of this tool prefers it: it is a real
+   measurement rather than an assumption about what a pixel means.
+3. **The +Y direction** *(optional)* — world +X runs right and +Y runs down
+   the map. If the plane's natural axis is not aligned that way, click a
+   point along it. The rotation is **baked into the stored image once**,
+   rather than carried as a term through every later transform, where it
+   would be a standing invitation for sign errors.
+
+Until both an origin and a scale exist, the map shows as *not georeferenced*
+and **the belt map ignores it** and keeps using the typed belt dimensions.
+That is deliberate: rendering a metric overlay against unknown units would
+produce confident nonsense, which is worse than an obviously plain rectangle.
+
+The grid spacing adapts to the map's size — 200 mm on a 1.4 m belt, 2 m on a
+20 m hall — so the same code is readable at a workbench and across a factory
+floor. The world origin is marked with a red cross whenever it falls on the
+canvas; seeing it sit where you expect is the fastest check that the whole
+georeferencing is right.
+
+> Uploaded maps live in `results/_workspace/` and are **not committed** —
+> they are rig-specific and can be large. The directory and `*.glb` are
+> gitignored.
 
 ### B, C, D · Session parameters, solve, save
 
@@ -478,7 +616,7 @@ Lucid cameras, which have nothing to compare against.
 
 ---
 
-## 6. Two things that will silently ruin a calibration
+## 6. Three things that will silently ruin a calibration
 
 **Resolution.** Intrinsics are resolution-specific. The Basler `a2A1920` has a
 1920×1200 sensor while the rig records 1280×720, so the camera is cropping or
@@ -489,6 +627,15 @@ scaling — and a `K` measured at one resolution does not transfer to the other.
 **Print scaling.** Covered in §3, and worth repeating because it is undetectable
 downstream: a board printed at 97% produces a calibration that passes every
 internal check while every millimetre it reports is 3% wrong.
+
+**The wrong physical camera.** With two Baslers on the rig and nothing but
+enumeration order telling `basler_1` from `basler_2` (§4, Step 1), it is
+possible to calibrate the *right name* against the *wrong hardware* — pick the
+device that answers first without checking, and everything downstream about
+that camera is wrong while looking completely normal. The **Device** picker
+(shown whenever more than one unit is connected) and the serial recorded into
+each saved calibration exist specifically to catch this: if two camera names
+end up sharing one serial, the rig status board says so.
 
 ---
 
@@ -512,6 +659,20 @@ internal check while every millimetre it reports is 3% wrong.
 | Edits to the plan vanish | They were not saved — the **Save plan** button shows a dot while edits are pending. |
 | Belt map: "no calibrations with extrinsics" | No camera has a solved pose yet — intrinsics alone are not enough. Check the rig page's status board. |
 | Belt map mostly empty | Belt dimensions too large, or a camera pointing away from the belt. |
+| Lucid preview/recording is grayscale (colour camera) | Two causes, both fixed 2026-07-31: the Lucid source used to treat the raw Bayer stream as grayscale instead of debayering it; and if another process holds GigE Vision controller access, format writes fail read-only. Restart `app.py` to load the fix, and close any other viewer/recorder (ArenaView, a stale session, another machine on the switch). |
+| Lucid: "could not start streaming … another process probably holds control" | GigE Vision allows exactly one controlling process per camera. Find and close the other session, then retry. |
+| RealSense: source available but no frames ever arrive | macOS needs root for the USB power state: `sudo /opt/anaconda3/envs/ams/bin/python app.py`. If it previously exited uncleanly, run `reset_realsense.py` first. |
+| "N Basler cameras connected — specify which one" | Two or more Baslers (or RealSense units) are on the network and the tool refuses to guess between them. Pick one from the **Device** field. |
+| "no Basler camera with serial ... found" | The device picked isn't connected right now — reconnect it, or refresh the page to re-enumerate. |
+| Rig status board: two cameras flag "also recorded under ..." | The same physical serial is saved under two camera names — either the same camera was calibrated twice under different names, or two results were cross-attributed. Check both before trusting either; **Clear** the wrong one and redo it. |
+| Setup shows a device serial marked "(asserted)" | It was typed in by hand rather than read from live hardware — normal for the Folder-source route (§1), which has no camera to ask. Verify it against the recorder's console output from when the footage was captured. |
+| "Use factory intrinsics" refuses with a model name | The sensor reported a distortion model this tool cannot represent (not Brown-Conrady — e.g. a fisheye stream). Board-calibrate that camera instead; adopting the factory numbers would silently misapply the wrong undistortion model. |
+| Clear button greyed out | Nothing is saved for that camera yet — there is nothing to clear. |
+| Workspace map uploaded but the belt map ignores it | It is not georeferenced yet: a PNG needs both an origin **and** a scale. The panel says which is missing. |
+| "this GLB uses Draco compression" | Re-export the model without Draco — the decoder is a large dependency this tool deliberately does not carry. |
+| "not a GLB file (bad magic…)" | You exported `.gltf` (JSON + separate files) rather than `.glb` (single binary). Re-export as binary. |
+| Belt map grid is too dense or too sparse | It adapts to the map extent automatically. If it looks wrong, the scale is probably wrong — check mm-per-pixel against a known distance. |
+| World origin cross is not where you expect | The origin click or the scale is off. Re-click the origin; both can be redone at any time without re-uploading. |
 
 ---
 

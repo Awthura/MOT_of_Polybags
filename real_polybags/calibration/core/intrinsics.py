@@ -263,6 +263,77 @@ def format_report(res: IntrinsicResult, expected_fx: float | None = None) -> str
     return "\n".join(L)
 
 
+# Distortion models this tool's undistortion pipeline can represent. Both
+# `extrinsics.image_to_belt` and `belt_to_image` go through cv2.undistortPoints
+# / cv2.projectPoints, which assume the Brown-Conrady radial-tangential model —
+# a fisheye camera reporting Kannala-Brandt or F-Theta coefficients through
+# that path would produce a plausible-looking but wrong undistortion, with
+# nothing downstream able to tell the difference from a correct one.
+COMPATIBLE_FACTORY_MODELS = ("brown conrady", "none")
+
+
+def from_factory_intrinsics(camera: str, factory: dict) -> IntrinsicResult:
+    """Adopt a camera's own factory calibration instead of fitting one.
+
+    The RealSense D435 reports `fx, fy, ppx, ppy` and a distortion model
+    directly from the sensor — the only camera on this rig with independent
+    ground truth. This skips the board-capture flow entirely rather than
+    merely comparing against it (see `intrinsics.assess` / the "vs known
+    reference" panel for the comparison path, which is still worth doing once
+    to validate the tool itself).
+
+    There is nothing to report an RMS or frame coverage for — this was never
+    fitted here — so those fields are left empty rather than filled with a
+    zero that would read as a suspiciously perfect result.
+    """
+    model = str(factory.get("model", "")).strip()
+    if not any(m in model.lower() for m in COMPATIBLE_FACTORY_MODELS):
+        raise ValueError(
+            f"distortion model '{model}' is not Brown-Conrady compatible — "
+            f"this tool's undistortion (cv2.undistortPoints / projectPoints) "
+            f"assumes that model, and applying it to a different one would "
+            f"silently produce a wrong result rather than an obvious failure")
+
+    w, h = int(factory["width"]), int(factory["height"])
+    K = np.array([[factory["fx"], 0.0, factory["cx"]],
+                  [0.0, factory["fy"], factory["cy"]],
+                  [0.0, 0.0, 1.0]])
+    # RealSense's Brown-Conrady coeffs are ordered (k1, k2, p1, p2, k3),
+    # matching OpenCV's convention directly — no reordering needed.
+    coeffs = factory.get("coeffs") or [0.0] * 5
+    D = np.array(coeffs, dtype=float)
+
+    return IntrinsicResult(
+        camera=camera, image_size=(w, h), K=K, D=D, rms=float("nan"),
+        per_view_error=[], view_sources=[], coverage={},
+        warnings=[f"factory calibration ({model or 'unknown model'}) — not "
+                  f"fitted by this tool, so there is no reprojection error or "
+                  f"frame coverage to report"])
+
+
+def format_factory_report(res: IntrinsicResult, model: str) -> str:
+    """Human-readable summary for an adopted factory calibration.
+
+    Deliberately separate from `format_report`: that function assumes a
+    non-empty `per_view_error` (it calls `max()` on it) and reports coverage
+    and per-view statistics that simply do not exist for a number the sensor
+    reported rather than one this tool fitted.
+    """
+    D = np.asarray(res.D).ravel().round(5).tolist()
+    L = ["=" * 78,
+         f"FACTORY INTRINSICS — {res.camera}   "
+         f"{res.image_size[0]}x{res.image_size[1]}   ({model})",
+         "=" * 78,
+         f"  fx = {res.fx:9.2f}    fy = {res.fy:9.2f}",
+         f"  cx = {res.cx:9.2f}    cy = {res.cy:9.2f}",
+         f"  D  = {D}",
+         "",
+         "  Reported by the sensor's own factory calibration, not fitted from",
+         "  board captures here — there is no reprojection error or frame",
+         "  coverage to show."]
+    return "\n".join(L)
+
+
 def expected_fx(focal_mm: float, pixel_size_um: float) -> float:
     """fx in pixels predicted from lens focal length and sensor pixel pitch.
 

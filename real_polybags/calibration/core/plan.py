@@ -234,8 +234,19 @@ def _pending_for(state: str, rec: dict | None, cplan: dict, method: str) -> list
         todo.append("intrinsics not measured — bench work, no rig access needed")
     if state in ("blocked", "ready", "provisional"):
         if state == "provisional":
-            todo.append("only a tape homography — re-solve against the board "
-                        "for a distortion-corrected pose")
+            method = store.method_of(rec) if rec else None
+            if method == "homography_points":
+                # Solved from clicked correspondences but with no intrinsics
+                # available at the time. The fix is not to re-click anything —
+                # the points are stored — it is to measure the lens and
+                # re-solve against them.
+                todo.append("solved from map correspondences without "
+                            "intrinsics — lens distortion is uncorrected. "
+                            "Calibrate this camera's lens, then re-solve; the "
+                            "clicked points are saved and need not be redone")
+            else:
+                todo.append("only a tape homography — re-solve against the "
+                            "board for a distortion-corrected pose")
         else:
             todo.append("belt pose not solved")
         if method == "B" and not cplan.get("offset_measured"):
@@ -266,12 +277,15 @@ def roster(results_dir: Path, plan: dict) -> list[dict]:
         state = _state_of(rec)
         intr = (rec or {}).get("intrinsics") or {}
         ext = (rec or {}).get("extrinsics") or {}
+        dev = (rec or {}).get("device") or {}
         rows.append({
             "name": name,
             "in_plan": camera_plan(plan, name) is not None,
             "state": state,
             "error": (rec or {}).get("_error"),
             "method": store.method_of(rec) if rec and "_error" not in rec else None,
+            "intrinsics_method": (store.intrinsics_method_of(rec)
+                                  if rec and "_error" not in rec else None),
             "synthetic": bool(rec and "_error" not in rec and store.is_synthetic(rec)),
             "saved_utc": (rec or {}).get("created_utc"),
             "has_intrinsics": "K" in intr,
@@ -280,10 +294,38 @@ def roster(results_dir: Path, plan: dict) -> list[dict]:
             "height_above_belt_mm": ext.get("height_above_belt_mm"),
             "extr_error_px": ext.get("reproj_error_px"),
             "solved_offset_mm": ext.get("board_origin_offset_mm"),
+            "device_serial": dev.get("serial"),
+            "device_model": dev.get("model"),
+            "device_asserted": bool(dev.get("asserted")),
             "plan": cplan,
             "pending": _pending_for(state, rec, cplan, method),
         })
+
+    _flag_duplicate_devices(rows)
     return rows
+
+
+def _flag_duplicate_devices(rows: list[dict]) -> None:
+    """Catch the mixup this rig is exposed to: two Basler units, disambiguated
+    only by enumeration order, with camera *names* that are just labels typed
+    into this tool. If the same physical serial shows up under two different
+    camera names, that is either the same camera calibrated twice under two
+    names, or two results that got cross-attributed — either way, something
+    downstream would silently use the wrong pose for one of them.
+    """
+    by_serial: dict[str, list[str]] = {}
+    for r in rows:
+        s = r["device_serial"]
+        if s:
+            by_serial.setdefault(s, []).append(r["name"])
+    for r in rows:
+        s = r["device_serial"]
+        others = [n for n in by_serial.get(s, []) if n != r["name"]] if s else []
+        if others:
+            r["pending"].insert(0,
+                f"device serial {s} is also recorded under {', '.join(others)} — "
+                f"these may be the same physical camera filed under two names, "
+                f"or two results cross-attributed. Check before trusting either.")
 
 
 def summarise_roster(rows: list[dict]) -> dict:

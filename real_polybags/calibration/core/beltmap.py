@@ -320,9 +320,42 @@ def coverage_report(cams: list[CameraOnBelt], frame: BeltFrame) -> dict:
     }
 
 
+def nice_grid_mm(frame: BeltFrame, target_lines: int = 12) -> float:
+    """A grid spacing that suits the map's actual size.
+
+    A fixed 100 mm grid is right for a 1.4 m conveyor and unreadable on a 20 m
+    factory floor — 200 lines of hatching with overlapping labels. Picks a
+    round 1/2/5 x 10^n spacing giving roughly `target_lines` divisions across
+    the larger dimension, so the same code serves a workbench and a warehouse.
+    """
+    span = max(frame.width_mm, frame.height_mm)
+    if span <= 0:
+        return 100.0
+    raw = span / max(target_lines, 1)
+    mag = 10.0 ** np.floor(np.log10(raw))
+    for step in (1, 2, 5, 10):
+        if raw <= step * mag:
+            return float(step * mag)
+    return float(10 * mag)
+
+
+def _fmt_grid_label(v_mm: float, grid_mm: float) -> str:
+    """Label in mm below a metre, in metres above — a 12000 mm tick reads
+    better as '12 m', and at that scale nobody wants the extra digits."""
+    if grid_mm >= 1000:
+        return f"{v_mm / 1000:g}m"
+    return f"{v_mm:.0f}"
+
+
 def draw_overlay(base: np.ndarray, cams: list[CameraOnBelt], frame: BeltFrame,
-                 grid_mm: float = 100.0) -> np.ndarray:
-    """Annotate the map: metric grid, camera footprints, camera positions."""
+                 grid_mm: float | None = None) -> np.ndarray:
+    """Annotate the map: metric grid, camera footprints, camera positions.
+
+    `grid_mm=None` picks a spacing to suit the map extent (see
+    `nice_grid_mm`); pass a number to force one.
+    """
+    if grid_mm is None:
+        grid_mm = nice_grid_mm(frame)
     out = base.copy()
     if out.ndim == 2:
         out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
@@ -333,15 +366,15 @@ def draw_overlay(base: np.ndarray, cams: list[CameraOnBelt], frame: BeltFrame,
     while x <= frame.x_max_mm:
         px = int((x - frame.x_min_mm) / frame.mm_per_px)
         cv2.line(out, (px, 0), (px, out.shape[0]), g, 1)
-        cv2.putText(out, f"{x:.0f}", (px + 3, 14), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.35, g, 1)
+        cv2.putText(out, _fmt_grid_label(x, grid_mm), (px + 3, 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, g, 1)
         x += grid_mm
     y = np.ceil(frame.y_min_mm / grid_mm) * grid_mm
     while y <= frame.y_max_mm:
         py = int((y - frame.y_min_mm) / frame.mm_per_px)
         cv2.line(out, (0, py), (out.shape[1], py), g, 1)
-        cv2.putText(out, f"{y:.0f}", (3, py - 3), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.35, g, 1)
+        cv2.putText(out, _fmt_grid_label(y, grid_mm), (3, py - 3),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, g, 1)
         y += grid_mm
 
     colours = [(90, 220, 110), (235, 160, 60), (90, 140, 245),

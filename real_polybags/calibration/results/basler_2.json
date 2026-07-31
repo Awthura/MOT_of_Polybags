@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "camera": "basler_2",
+  "created_utc": "2026-07-31T09:29:52+00:00",
+  "source": "basler",
+  "notes": "Reconstructed from a pasted console report, not saved live through the app \u2014 per-view error list, exact (unrounded) tilt figures, and device serial were not available and are not stored. RESOLUTION WARNING: this is the camera's full sensor size, not the 1280x720 the rest of this pipeline documents recording at \u2014 confirm which is intended before recording extrinsics footage, or the resolution guard will refuse to solve a pose against a 1280x720 session. Device serial asserted from sensor geometry, not read live: 1920x1200 uniquely identifies the a2A1920-51gcBAS among the two Baslers enumerated on this rig on 2026-07-31.",
+  "intrinsics": {
+    "image_size": [
+      1920,
+      1200
+    ],
+    "K": [
+      [
+        1362.64,
+        0.0,
+        953.7
+      ],
+      [
+        0.0,
+        1365.24,
+        592.34
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "D": [
+      -0.3262,
+      0.20499,
+      -0.00186,
+      0.00153,
+      -0.08297
+    ],
+    "fx": 1362.64,
+    "fy": 1365.24,
+    "cx": 953.7,
+    "cy": 592.34,
+    "rms_px": 0.423,
+    "n_views": 25,
+    "per_view_error_px": [],
+    "coverage": {
+      "frame_cells_seen": 16,
+      "frame_cells_total": 16,
+      "frame_fraction": 1.0,
+      "tilt_deg_min": 2.0,
+      "tilt_deg_max": 15.0
+    },
+    "warnings": [
+      "no strongly tilted views \u2014 focal length and distance are nearly degenerate, so fx/fy may be confidently wrong despite a low RMS",
+      "fewer than 3 tilted views \u2014 add more off-axis poses"
+    ],
+    "method": "board",
+    "worst_view_error_px": 0.757
+  },
+  "device": {
+    "serial": "40121976",
+    "model": "a2A1920-51gcBAS",
+    "asserted": true
+  }
+}

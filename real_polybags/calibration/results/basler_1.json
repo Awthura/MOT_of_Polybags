@@ -1,33 +1,24 @@
 {
   "schema_version": 1,
   "camera": "basler_1",
-  "created_utc": "2026-07-29T07:46:17+00:00",
-  "source": "synthetic",
-  "notes": "",
-  "board": {
-    "name": "AMS-small",
-    "squares_x": 7,
-    "squares_y": 8,
-    "square_mm": 25.0,
-    "marker_mm": 18.0,
-    "dictionary": "DICT_4X4_50",
-    "paper": "A4"
-  },
+  "created_utc": "2026-07-31T09:29:52+00:00",
+  "source": "basler",
+  "notes": "Reconstructed from a pasted console report, not saved live through the app \u2014 per-view error list, exact (unrounded) tilt figures, and device serial were not available and are not stored. RESOLUTION WARNING: this is the camera's full sensor size, not the 1280x720 the rest of this pipeline documents recording at \u2014 confirm which is intended before recording extrinsics footage, or the resolution guard will refuse to solve a pose against a 1280x720 session. Device serial asserted from sensor geometry, not read live: 2046x1080 uniquely identifies the acA2000-50gc among the two Baslers enumerated on this rig on 2026-07-31.",
   "intrinsics": {
     "image_size": [
-      1280,
-      720
+      2046,
+      1080
     ],
     "K": [
       [
-        1107.5879086530504,
+        2410.68,
         0.0,
-        641.115732303924
+        1045.59
       ],
       [
         0.0,
-        1103.278770360302,
-        359.43853618155373
+        2415.21,
+        535.87
       ],
       [
         0.0,
@@ -36,100 +27,33 @@
       ]
     ],
     "D": [
-      -0.27818970217244177,
-      0.11607538683917352,
-      0.0009722701704635241,
-      -0.00019867340101415167,
-      -0.0004896787597063111
+      -0.24797,
+      0.61727,
+      -0.00031,
+      0.00048,
+      -1.02716
     ],
-    "fx": 1107.5879086530504,
-    "fy": 1103.278770360302,
-    "cx": 641.115732303924,
-    "cy": 359.43853618155373,
-    "rms_px": 0.24440339171502548,
-    "n_views": 13,
-    "per_view_error_px": [
-      0.22003029168463878,
-      0.09633958915984697,
-      0.19510238043680792,
-      0.37844025195905684,
-      0.20408536846114664,
-      0.20635353224590777,
-      0.2471156555821646,
-      0.22576687707815898,
-      0.2146251436970211,
-      0.18518767043526346,
-      0.12139228393057915,
-      0.4250249683425377,
-      0.28951644444975816
-    ],
+    "fx": 2410.68,
+    "fy": 2415.21,
+    "cx": 1045.59,
+    "cy": 535.87,
+    "rms_px": 0.368,
+    "n_views": 27,
+    "per_view_error_px": [],
     "coverage": {
       "frame_cells_seen": 16,
       "frame_cells_total": 16,
       "frame_fraction": 1.0,
-      "grid": [
-        [
-          1,
-          1,
-          1,
-          1
-        ],
-        [
-          1,
-          1,
-          1,
-          1
-        ],
-        [
-          1,
-          1,
-          1,
-          1
-        ],
-        [
-          1,
-          1,
-          1,
-          1
-        ]
-      ],
-      "tilt_deg_min": 4.576876467776046,
-      "tilt_deg_max": 40.728289080985185,
-      "tilt_deg_mean": 28.973168333233936,
-      "n_views_tilted_over_15deg": 11
+      "tilt_deg_min": 1.0,
+      "tilt_deg_max": 22.0
     },
-    "warnings": []
+    "warnings": [],
+    "method": "board",
+    "worst_view_error_px": 0.564
   },
-  "reference": {
-    "synthetic_truth": {
-      "K": [
-        [
-          1100.0,
-          0.0,
-          645.0
-        ],
-        [
-          0.0,
-          1095.0,
-          355.0
-        ],
-        [
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "D": [
-        -0.28,
-        0.12,
-        0.001,
-        -0.0008,
-        0.0
-      ],
-      "fx": 1100.0,
-      "fy": 1095.0,
-      "cx": 645.0,
-      "cy": 355.0
-    }
+  "device": {
+    "serial": "23781562",
+    "model": "acA2000-50gc",
+    "asserted": true
   }
 }

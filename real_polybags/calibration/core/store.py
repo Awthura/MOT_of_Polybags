@@ -26,10 +26,12 @@ they still apply:
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 SCHEMA_VERSION = 1
@@ -39,7 +41,15 @@ def _clean(o):
     if isinstance(o, np.ndarray):
         return o.tolist()
     if isinstance(o, (np.floating, np.integer)):
-        return o.item()
+        v = o.item()
+        return None if isinstance(v, float) and math.isnan(v) else v
+    # A factory-adopted calibration has no fitted RMS, recorded as NaN rather
+    # than a zero that would read as a suspiciously perfect fit. NaN is not
+    # valid JSON (json.dumps emits a bare `NaN` token that Python accepts but
+    # JavaScript's JSON.parse rejects outright), so it is written as null —
+    # the same "not applicable" this schema already uses elsewhere.
+    if isinstance(o, float) and math.isnan(o):
+        return None
     if isinstance(o, dict):
         return {k: _clean(v) for k, v in o.items()}
     if isinstance(o, (list, tuple)):
@@ -91,9 +101,82 @@ def build_plane_record(camera: str, H_image_to_belt, image_size,
     }
 
 
+def build_correspondence_record(camera: str, res, image_size,
+                                intr_record: dict | None = None,
+                                source: str = "", notes: str = "") -> dict:
+    """A calibration solved from clicked image<->map point pairs.
+
+    Written into the SAME `extrinsics` block as a board solve, so everything
+    downstream — the belt map, the status board, `load_arrays` — consumes it
+    without knowing which route produced it. What differs is recorded, not
+    inferred:
+
+    - `method` distinguishes it from a board solve for anyone who needs to.
+    - The correspondences themselves are kept. They are the entire input, they
+      cost nothing to store, and keeping them means a fit can be re-run,
+      audited, or improved by adding a point later without re-clicking the
+      ones already done.
+    - With intrinsics the decomposed `rvec`/`tvec` are stored too, so the
+      camera gets a real position and the map can draw it. Without them,
+      those keys are simply absent rather than filled with placeholders.
+    """
+    ext = {
+        "H_image_to_belt": res.H_image_to_world,
+        "H_belt_to_image": res.H_world_to_image,
+        "image_size": list(image_size),
+        "rms_mm": res.rms_mm,
+        "max_error_mm": res.max_mm,
+        "n_points": int(len(res.image_points)),
+        "n_inliers": int(res.inliers.sum()),
+        "used_intrinsics": bool(res.used_intrinsics),
+        "warnings": list(res.warnings),
+    }
+    if res.rvec is not None:
+        R, _ = cv2.Rodrigues(np.asarray(res.rvec, float))
+        ext.update({
+            "rvec": np.asarray(res.rvec).ravel(),
+            "tvec_mm": np.asarray(res.tvec).ravel(),
+            "R": R,
+            "camera_position_mm": res.camera_position_mm,
+            "height_above_belt_mm": abs(float(res.camera_position_mm[2])),
+        })
+    # NB: no `reproj_error_px` — this route's error is in millimetres on the
+    # world plane (`rms_mm`), not pixels in the image. Writing it under the
+    # board route's key would put two different quantities in one column.
+
+    rec = {
+        "schema_version": SCHEMA_VERSION,
+        "camera": camera,
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "method": "homography_points",
+        "source": source,
+        "notes": notes,
+        "extrinsics": _clean(ext),
+        "correspondences": _clean({
+            "image_points_px": res.image_points,
+            "world_points_mm": res.world_points,
+            "residuals_mm": res.residuals_mm,
+            "inliers": res.inliers.astype(int),
+        }),
+        "limitations": ([] if res.used_intrinsics else [
+            "no intrinsics: lens distortion is not corrected, so error grows "
+            "toward the frame edges",
+            "no camera pose: a homography fixes the plane mapping, not where "
+            "the camera is",
+        ]),
+    }
+    # Carry the camera's existing intrinsics through untouched — this route
+    # solves extrinsics only, and a save must not drop the other half.
+    if intr_record:
+        rec["intrinsics"] = intr_record
+    return rec
+
+
 def build_record(camera: str, intr_result=None, extr_result=None,
                  board_spec=None, source: str = "", notes: str = "",
-                 reference: dict | None = None) -> dict:
+                 reference: dict | None = None,
+                 intrinsics_method: str = "board",
+                 device: dict | None = None) -> dict:
     rec = {
         "schema_version": SCHEMA_VERSION,
         "camera": camera,
@@ -101,6 +184,8 @@ def build_record(camera: str, intr_result=None, extr_result=None,
         "source": source,
         "notes": notes,
     }
+    # A board fit still needs the board spec on record even when the ChArUco
+    # capture flow was skipped; harmless when the board simply wasn't used.
     if board_spec is not None:
         rec["board"] = _clean(asdict(board_spec))
 
@@ -116,6 +201,10 @@ def build_record(camera: str, intr_result=None, extr_result=None,
             "per_view_error_px": intr_result.per_view_error,
             "coverage": intr_result.coverage,
             "warnings": intr_result.warnings,
+            # "board" (fitted from ChArUco captures here) or "factory" (adopted
+            # from the camera's own calibration, e.g. RealSense). Distinguishes
+            # a fitted RMS of "not applicable" from one that is genuinely zero.
+            "method": intrinsics_method,
         })
 
     if extr_result is not None:
@@ -138,6 +227,11 @@ def build_record(camera: str, intr_result=None, extr_result=None,
     # comparison stays visible rather than being made once and forgotten.
     if reference:
         rec["reference"] = _clean(reference)
+    # Which physical camera this was actually measured from — see
+    # `sources.FrameSource.device_info`. Distinct from `camera`, which is only
+    # ever a label the operator typed in.
+    if device:
+        rec["device"] = _clean(device)
     return rec
 
 
@@ -183,6 +277,32 @@ def carry_forward_extrinsics(record: dict, results_dir: Path) -> dict:
     return record
 
 
+def carry_forward_device(record: dict, results_dir: Path) -> dict:
+    """Keep an already-known device serial when this save doesn't supply one.
+
+    Unlike a pose, device identity has no staleness concept — a camera's
+    serial does not change when its lens is re-measured, so this carries it
+    forward unconditionally rather than flagging it. Matters most for Route B
+    (recorded video -> extracted frames -> Folder source): a folder session
+    has no live hardware to ask, so without this, re-calibrating a camera's
+    lens from an old recording would quietly erase whatever serial an earlier
+    live session — or an operator manually asserting it from the recorder's
+    console output — had recorded.
+    """
+    if record.get("device"):
+        return record
+    path = Path(results_dir) / f"{record['camera']}.json"
+    if not path.exists():
+        return record
+    try:
+        old = load(path)
+    except Exception:
+        return record
+    if old.get("device"):
+        record["device"] = old["device"]
+    return record
+
+
 def save(record: dict, results_dir: Path) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     path = results_dir / f"{record['camera']}.json"
@@ -218,6 +338,18 @@ def is_synthetic(record: dict) -> bool:
         record.get("reference") or {})
 
 
+def intrinsics_method_of(record: dict) -> str | None:
+    """How the intrinsics half was obtained: 'board' or 'factory'.
+
+    None means this record has no intrinsics at all (e.g. a tape-measure
+    `homography_tape` record). 'board' is the default for records saved before
+    this field existed — every intrinsics fit was a board capture until the
+    factory-adoption path was added, so that default is not a guess.
+    """
+    intr = record.get("intrinsics")
+    return intr.get("method", "board") if intr else None
+
+
 def load_arrays(record: dict) -> dict:
     """Pull the matrices back out as numpy, ready to use."""
     out = {}
@@ -242,24 +374,43 @@ def load_arrays(record: dict) -> dict:
     return out
 
 
+def _num(v, default=float("nan")) -> float:
+    """A stored number, or NaN — `None` is a legitimate value in this schema
+    (a factory calibration has no fitted RMS), and formatting it would raise."""
+    return default if v is None else v
+
+
 def summarise(results_dir: Path) -> str:
-    """One-line-per-camera overview of everything calibrated so far."""
+    """One-line-per-camera overview of everything calibrated so far.
+
+    The extrinsic-error column carries different units per route — pixels for
+    a board solve, millimetres on the world plane for a point-correspondence
+    solve — so it is labelled per row rather than pretending one number means
+    the same thing everywhere.
+    """
     files = sorted(Path(results_dir).glob("*.json"))
     if not files:
         return "No calibrations saved yet."
-    L = [f"{'camera':<16}{'res':>11}{'fx':>9}{'fy':>9}{'rms':>7}{'ext err':>9}  status"]
+    L = [f"{'camera':<16}{'res':>11}{'fx':>9}{'fy':>9}{'rms':>7}"
+         f"{'ext err':>12}  status"]
     for f in files:
         r = load(f)
         i = r.get("intrinsics", {})
         e = r.get("extrinsics", {})
         size = i.get("image_size")
         warns = len(i.get("warnings", [])) + len(e.get("warnings", []))
+        if e.get("reproj_error_px") is not None:
+            ext_err = f"{e['reproj_error_px']:.2f}px"
+        elif e.get("rms_mm") is not None:
+            ext_err = f"{e['rms_mm']:.1f}mm"
+        else:
+            ext_err = "-"
         L.append(
             f"{r['camera']:<16}"
             f"{(f'{size[0]}x{size[1]}' if size else '-'):>11}"
-            f"{i.get('fx', float('nan')):>9.1f}"
-            f"{i.get('fy', float('nan')):>9.1f}"
-            f"{i.get('rms_px', float('nan')):>7.2f}"
-            f"{e.get('reproj_error_px', float('nan')):>9.2f}"
+            f"{_num(i.get('fx')):>9.1f}"
+            f"{_num(i.get('fy')):>9.1f}"
+            f"{_num(i.get('rms_px')):>7.2f}"
+            f"{ext_err:>12}"
             f"  {'OK' if warns == 0 else f'{warns} warning(s)'}")
     return "\n".join(L)

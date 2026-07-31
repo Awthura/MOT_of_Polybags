@@ -233,8 +233,18 @@ table.checks tr.chk-hint td {
   margin-top: 10px; padding: 9px 12px; border-radius: 6px;
   font-size: 13px; border: 1px solid var(--line); background: var(--panel-alt);
 }
-.banner.ok  { border-color: var(--ok);  background: rgba(47,143,78,.10); }
-.banner.bad { border-color: var(--bad); background: rgba(192,57,43,.10); }
+.banner.ok   { border-color: var(--ok);   background: rgba(47,143,78,.10); }
+.banner.bad  { border-color: var(--bad);  background: rgba(192,57,43,.10); }
+.banner.warn { border-color: var(--warn); background: rgba(200,137,26,.10); }
+
+/* Workspace-map click markers — origin and the two scale points. */
+.ws-marker {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border: 2px solid var(--bad); border-radius: 50%;
+  pointer-events: none; box-shadow: 0 0 0 2px rgba(0,0,0,.55);
+}
+.ws-marker.alt { border-color: var(--ams-green); border-radius: 2px; }
+#ws-viewport.picking img { cursor: crosshair; outline: 2px solid var(--ams-green); }
 
 .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .shot { position: relative; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }

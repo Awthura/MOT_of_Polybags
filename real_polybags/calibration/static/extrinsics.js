@@ -56,11 +56,15 @@ function renderPlan(summary) {
     tr.innerHTML = `
       <td class="cam">${esc(row.name)}${row.in_plan ? ''
         : ' <span class="pill idle" title="has a saved calibration but is not in the plan">unlisted</span>'}${
-        row.synthetic ? ' <span class="pill bad" title="measured from the synthetic camera — a rehearsal result">synthetic</span>' : ''}</td>
+        row.synthetic ? ' <span class="pill bad" title="measured from the synthetic camera — a rehearsal result">synthetic</span>' : ''}${
+        row.device_serial ? `<div class="note" style="margin-top:2px">S/N ${esc(row.device_serial)}${
+          row.device_asserted ? ' <span title="operator-asserted, not hardware-confirmed">(asserted)</span>' : ''}</div>` : ''}</td>
       <td><span class="pill ${STATE_PILL[row.state]}">${STATE_WORD[row.state]}</span></td>
       <td class="mono">${row.has_intrinsics
-        ? `${row.image_size ? row.image_size.join('×') : '?'} · rms ${
-            Number.isFinite(row.intrinsics_rms_px) ? row.intrinsics_rms_px.toFixed(2) : '?'} px`
+        ? `${row.image_size ? row.image_size.join('×') : '?'}` + (
+            row.intrinsics_method === 'factory'
+              ? ` · <span class="pill info" title="adopted from the sensor's factory calibration, not fitted here">factory</span>`
+              : ` · rms ${Number.isFinite(row.intrinsics_rms_px) ? row.intrinsics_rms_px.toFixed(2) : '?'} px`)
         : '—'}</td>
       <td class="mono">${Number.isFinite(row.height_above_belt_mm)
         ? `${row.height_above_belt_mm.toFixed(0)} mm · ${
@@ -79,7 +83,10 @@ function renderPlan(summary) {
       <td class="anticipated" style="text-align:center"><input type="checkbox" class="cell"
             data-i="${i}" data-k="offset_measured"
             ${p.offset_measured ? 'checked' : ''}></td>
-      <td><button class="ghost small" data-solve="${esc(row.name)}">Solve</button></td>`;
+      <td><button class="ghost small" data-solve="${esc(row.name)}">Solve</button>
+        <button class="danger small" data-clear="${esc(row.name)}"
+                title="Delete the saved calibration for this camera — intrinsics and any pose"
+                ${row.has_intrinsics || row.state !== 'blocked' || row.error ? '' : 'disabled'}>Clear</button></td>`;
     body.appendChild(tr);
 
     if (row.pending.length || row.error) {
@@ -110,6 +117,19 @@ function renderPlan(summary) {
       $('camera').value = el.dataset.solve;
       onCameraPicked();
       $('camera').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+  body.querySelectorAll('button[data-clear]').forEach(el => {
+    el.addEventListener('click', async () => {
+      const name = el.dataset.clear;
+      if (!confirm(`Delete the saved calibration for "${name}"?\n\n`
+                  + `This removes both intrinsics and any solved pose — there `
+                  + `is no smaller unit to clear. Cannot be undone.`)) return;
+      const r = await api(`/api/results/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (!r.ok) { toast(r.error || 'Could not clear', 5000); return; }
+      toast(r.deleted ? `Cleared ${name}` : `${name} had nothing saved`, 3500);
+      PLAN = r.plan; ROSTER = r.roster;
+      renderPlan(r.summary);
     });
   });
 
@@ -246,8 +266,45 @@ async function loadConfig() {
 
 function syncSourceUI() {
   const opt = $('source').selectedOptions[0];
+  const sourceId = $('source').value;
   $('source-note').textContent = opt ? opt.dataset.note : '';
-  $('folder-field').style.display = $('source').value === 'folder' ? '' : 'none';
+  $('folder-field').style.display = sourceId === 'folder' ? '' : 'none';
+
+  // Same logic as the intrinsics page (duplicated rather than shared — the
+  // two pages load independently and this is a handful of lines): a picker
+  // for live sources with >1 unit, a free-typed assertion for the folder
+  // source (no live hardware to ask), hidden otherwise.
+  const devices = (CONFIG.sources.find(s => s.id === sourceId) || {}).devices || [];
+  const devField = $('device-field');
+  const devInput = $('device');
+  const devList = $('device-list');
+  devList.innerHTML = '';
+  devices.forEach(d => {
+    const o = document.createElement('option');
+    o.value = d.serial;
+    o.textContent = `${d.serial}${d.model ? ' — ' + d.model : ''}`;
+    devList.appendChild(o);
+  });
+
+  if (devices.length > 1) {
+    devField.style.display = '';
+    $('device-note').textContent =
+      `${devices.length} connected — pick the one physically mounted as `
+      + `"${$('camera').value}".`;
+  } else if (sourceId === 'folder') {
+    devField.style.display = '';
+    devInput.value = '';
+    $('device-note').textContent =
+      'No live camera to confirm identity from. Optionally type the serial the '
+      + 'recorder printed for this footage — recorded as asserted, not '
+      + 'hardware-confirmed.';
+  } else {
+    devField.style.display = 'none';
+    devInput.value = '';
+    $('device-note').textContent = devices.length === 1
+      ? `Only one device connected (S/N ${devices[0].serial}) — no picker needed.`
+      : '';
+  }
 }
 $('source').addEventListener('change', syncSourceUI);
 
@@ -256,6 +313,7 @@ $('btn-start').addEventListener('click', async () => {
   const r = await post('/api/session', {
     source: $('source').value, board: $('board').value,
     camera, folder: $('folder').value,
+    device_serial: $('device').value || '',
   });
   if (!r.ok) { toast('Could not start: ' + r.error, 5000); return; }
 
@@ -269,11 +327,25 @@ $('btn-start').addEventListener('click', async () => {
   // Cache-bust so restarting a session does not reuse the old MJPEG stream.
   $('stream').src = '/api/stream?t=' + Date.now();
 
+  const db = $('device-banner');
+  if (r.device) {
+    db.classList.remove('hidden');
+    db.className = 'banner ' + (r.device.asserted ? 'warn' : 'ok');
+    db.textContent = r.device.asserted
+      ? `Device serial ${r.device.serial} — operator-asserted, not `
+        + `hardware-confirmed. Cross-check against the recorder's console output.`
+      : `Connected: S/N ${r.device.serial}${r.device.model ? ' (' + r.device.model + ')' : ''}.`;
+  } else {
+    db.classList.add('hidden');
+  }
+
   const loaded = r.loaded_intrinsics;
   if (loaded && !loaded.error) {
     $('solve-body').classList.remove('hidden');
     $('sec-save').classList.remove('hidden');
     const mismatch = loaded.synthetic && r.source !== 'synthetic';
+    const rmsPart = loaded.rms == null ? 'factory-provided'
+                                       : `RMS ${loaded.rms.toFixed(3)} px`;
     $('intr-state').className = 'banner ' + (mismatch ? 'bad' : 'ok');
     $('intr-state').textContent = mismatch
       ? `The saved intrinsics for ${r.camera} were measured from the SYNTHETIC `
@@ -281,8 +353,9 @@ $('btn-start').addEventListener('click', async () => {
         + `virtual lens, and the resolution matches, so nothing else would catch `
         + `this. Delete results/${r.camera}.json and calibrate the real lens first — `
         + `solving is refused until then.`
-      : `Reloaded intrinsics for ${r.camera}: measured ${loaded.created || 'previously'} `
-        + `at ${loaded.image_size[0]}×${loaded.image_size[1]}, RMS ${loaded.rms.toFixed(3)} px`
+      : `Reloaded intrinsics for ${r.camera} (${loaded.method || 'board'}): measured `
+        + `${loaded.created || 'previously'} at ${loaded.image_size[0]}×`
+        + `${loaded.image_size[1]}, ${rmsPart}`
         + `${loaded.synthetic ? ' (synthetic — rehearsal only)' : ''}. `
         + 'Lay the board flat on the belt and solve.';
     toast(mismatch ? 'Synthetic intrinsics on a real camera — solving is blocked'
@@ -380,4 +453,203 @@ $('btn-save').addEventListener('click', async () => {
   onCameraPicked();
 });
 
-loadConfig().then(loadPlan);
+// ── Workspace map ───────────────────────────────────────────────────────────
+// Generalizes the world plane past "a belt of width x length": upload a
+// top-down map of whatever plane this rig watches and georeference it. A GLB
+// arrives already georeferenced (glTF fixes metres and the model origin); a
+// PNG is a picture until an origin and a scale are supplied, and the server
+// refuses to use a half-georeferenced map rather than guessing units.
+
+let WS = null;              // the server's map metadata, or null
+let WS_PICK = null;         // 'origin' | 'scale' | 'axis' while picking
+let WS_SCALE_PTS = [];
+
+async function loadWorkspace() {
+  const r = await api('/api/workspace');
+  WS = r.ok ? r.map : null;
+  if (WS && r.png) $('ws-img').src = 'data:image/png;base64,' + r.png;
+  renderWorkspace();
+}
+
+function renderWorkspace() {
+  const banner = $('ws-state');
+  const body = $('ws-body');
+  if (!WS) {
+    banner.className = 'banner';
+    banner.classList.remove('hidden');
+    banner.textContent =
+      'No workspace map. The belt width and length above define the map '
+      + 'instead — which is fine for a conveyor, and limiting for anything else.';
+    body.classList.add('hidden');
+    return;
+  }
+
+  body.classList.remove('hidden');
+  const geo = WS.is_georeferenced;
+  banner.className = 'banner ' + (geo ? 'ok' : 'warn');
+  banner.classList.remove('hidden');
+  banner.textContent = geo
+    ? `Map ready (${WS.source.toUpperCase()}, ${WS.image_size[0]}×${WS.image_size[1]} px, `
+      + `${WS.mm_per_px.toFixed(3)} mm/px). The belt map now renders against it.`
+    : `Map uploaded (${WS.source.toUpperCase()}, ${WS.image_size[0]}×${WS.image_size[1]} px) `
+      + `but not yet georeferenced — set an origin and a scale below. Until both `
+      + `exist it is a picture, not a map, and the belt map keeps using the typed `
+      + `belt dimensions.`;
+
+  $('ws-origin-val').textContent = WS.origin_px
+    ? `${WS.origin_px[0].toFixed(0)}, ${WS.origin_px[1].toFixed(0)} px` : '—';
+  $('ws-scale-val').textContent = WS.mm_per_px
+    ? `${WS.mm_per_px.toFixed(3)} mm/px` : '—';
+  if (WS.mm_per_px) $('ws-mmpp').value = WS.mm_per_px.toFixed(3);
+
+  placeMarker('ws-marker-origin', WS.origin_px);
+
+  const s = $('ws-status');
+  if (geo) {
+    const w = WS.image_size[0] * WS.mm_per_px, h = WS.image_size[1] * WS.mm_per_px;
+    s.innerHTML = `<div class="stat"><span class="k">covers</span>`
+      + `<span class="v">${(w / 1000).toFixed(2)} × ${(h / 1000).toFixed(2)} m</span></div>`
+      + (WS.source === 'glb'
+         ? `<p class="note">Scale and origin came from the glTF model itself — `
+           + `no hand georeferencing was needed or used.</p>` : '');
+  } else {
+    s.innerHTML = '';
+  }
+}
+
+/* Position an absolutely-placed marker at a point in MAP-IMAGE pixels,
+   accounting for the <img> being scaled to fit its container. */
+function placeMarker(id, pt_px) {
+  const el = $(id), img = $('ws-img');
+  if (!pt_px || !img.naturalWidth) { el.classList.add('hidden'); return; }
+  const k = img.clientWidth / img.naturalWidth;
+  el.style.left = (pt_px[0] * k + img.offsetLeft) + 'px';
+  el.style.top = (pt_px[1] * k + img.offsetTop) + 'px';
+  el.classList.remove('hidden');
+}
+
+function setPicking(mode, hint) {
+  WS_PICK = mode;
+  $('ws-viewport').classList.toggle('picking', mode !== null);
+  $('ws-click-hint').textContent = hint || (WS && WS.is_georeferenced
+    ? 'Map is georeferenced. Re-click any step to change it.'
+    : 'Set an origin and a scale to georeference this map.');
+}
+
+$('ws-img').addEventListener('click', async (e) => {
+  if (!WS_PICK) return;
+  const img = e.target;
+  const rect = img.getBoundingClientRect();
+  // Back to native map pixels — the displayed image is scaled to fit, and
+  // clicking in display space would georeference against the wrong units.
+  const k = img.naturalWidth / rect.width;
+  const p = [(e.clientX - rect.left) * k, (e.clientY - rect.top) * k];
+
+  if (WS_PICK === 'origin') {
+    setPicking(null);
+    await georef({ origin_px: p });
+  } else if (WS_PICK === 'axis') {
+    setPicking(null);
+    await georef({ y_point_px: p });
+  } else if (WS_PICK === 'scale') {
+    WS_SCALE_PTS.push(p);
+    placeMarker(WS_SCALE_PTS.length === 1 ? 'ws-marker-a' : 'ws-marker-b', p);
+    if (WS_SCALE_PTS.length >= 2) {
+      setPicking(null, 'Two points marked — enter the real distance between '
+                     + 'them and press Apply.');
+      $('ws-dist').focus();
+    } else {
+      $('ws-click-hint').textContent = 'Now click the second point.';
+    }
+  }
+});
+
+async function georef(payload) {
+  const r = await post('/api/workspace/georef', payload);
+  if (!r.ok) { toast(r.error, 6000); return; }
+  WS = r.map;
+  if (r.png) $('ws-img').src = 'data:image/png;base64,' + r.png;
+  renderWorkspace();
+  toast('Map updated');
+}
+
+$('btn-ws-upload').addEventListener('click', async () => {
+  const f = $('ws-file').files[0];
+  if (!f) { toast('Choose a .png, .jpg or .glb first', 3000); return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  toast('Uploading…');
+  const r = await api('/api/workspace/upload', { method: 'POST', body: fd });
+  if (!r.ok) { toast(r.error, 7000); return; }
+  WS = r.map;
+  if (r.png) $('ws-img').src = 'data:image/png;base64,' + r.png;
+  WS_SCALE_PTS = [];
+  ['ws-marker-a', 'ws-marker-b'].forEach(i => $(i).classList.add('hidden'));
+  renderWorkspace();
+  setPicking(null);
+  toast(WS.is_georeferenced
+    ? 'Map uploaded and georeferenced from the model'
+    : 'Map uploaded — now set the origin and scale', 5000);
+});
+
+$('btn-ws-clear').addEventListener('click', async () => {
+  if (!confirm('Remove the workspace map?\n\nThe belt map will go back to '
+             + 'using the typed belt width and length.')) return;
+  const r = await api('/api/workspace', { method: 'DELETE' });
+  if (!r.ok) { toast(r.error || 'Could not remove', 5000); return; }
+  WS = null;
+  WS_SCALE_PTS = [];
+  renderWorkspace();
+  toast(r.deleted ? 'Map removed' : 'There was no map to remove');
+});
+
+$('btn-ws-pick-origin').addEventListener('click', () =>
+  setPicking('origin', 'Click the point on the map that is world (0, 0).'));
+
+$('btn-ws-pick-axis').addEventListener('click', () => {
+  if (!WS || !WS.origin_px) {
+    toast('Set the origin first — the axis is defined relative to it', 4000);
+    return;
+  }
+  setPicking('axis', 'Click a point lying along world +Y from the origin.');
+});
+
+$('btn-ws-pick-scale').addEventListener('click', () => {
+  WS_SCALE_PTS = [];
+  ['ws-marker-a', 'ws-marker-b'].forEach(i => $(i).classList.add('hidden'));
+  setPicking('scale', 'Click the first of two points whose real separation '
+                    + 'you have measured.');
+});
+
+$('btn-ws-apply-scale').addEventListener('click', async () => {
+  if (WS_SCALE_PTS.length < 2) {
+    toast('Click two points on the map first', 3500); return;
+  }
+  const d = parseFloat($('ws-dist').value);
+  if (!Number.isFinite(d) || d <= 0) {
+    toast('Enter the real distance between the two points, in mm', 4000); return;
+  }
+  await georef({ scale_points: WS_SCALE_PTS, distance_mm: d });
+});
+
+$('btn-ws-apply-mmpp').addEventListener('click', async () => {
+  const v = parseFloat($('ws-mmpp').value);
+  if (!Number.isFinite(v) || v <= 0) {
+    toast('Enter a positive mm-per-pixel value', 4000); return;
+  }
+  await georef({ mm_per_px: v });
+});
+
+// Markers are positioned in display space, so they must follow a resize.
+window.addEventListener('resize', () => {
+  if (WS) {
+    placeMarker('ws-marker-origin', WS.origin_px);
+    if (WS_SCALE_PTS[0]) placeMarker('ws-marker-a', WS_SCALE_PTS[0]);
+    if (WS_SCALE_PTS[1]) placeMarker('ws-marker-b', WS_SCALE_PTS[1]);
+  }
+});
+$('ws-img').addEventListener('load', () => {
+  if (WS) placeMarker('ws-marker-origin', WS.origin_px);
+});
+
+loadConfig().then(loadPlan).then(loadWorkspace);

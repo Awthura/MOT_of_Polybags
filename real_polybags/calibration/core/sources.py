@@ -47,6 +47,19 @@ class FrameSource:
         """Known ground truth, if this source has any (synthetic only)."""
         return None
 
+    def device_info(self) -> dict | None:
+        """Which physical unit this session is actually reading from.
+
+        Matters wherever more than one camera of the same kind can be on the
+        rig at once — two Baslers, potentially two RealSense units. A camera
+        *name* like "basler_2" is just a label the operator typed in; the
+        serial number is what the hardware itself reports, and it is what
+        lets a calibration be tied to one specific physical camera rather than
+        to whichever one happened to answer first. `None` where a source has
+        no such identity to report (synthetic, folder).
+        """
+        return None
+
 
 # ── Synthetic ────────────────────────────────────────────────────────────────
 
@@ -155,18 +168,59 @@ class FolderSource(FrameSource):
 # way to open the same hardware. Untested against cameras — they were offline
 # when this was written — so failures are surfaced rather than swallowed.
 
+def list_realsense_devices() -> list[dict]:
+    """Every RealSense currently visible over USB, serial first.
+
+    A calibration session should never guess which of two D435 units it is
+    talking to, so this exists to populate a picker rather than let
+    `RealSenseSource` fall back to whichever the driver enumerates first.
+    """
+    import pyrealsense2 as rs
+    ctx = rs.context()
+    out = []
+    for dev in ctx.query_devices():
+        out.append({
+            "serial": dev.get_info(rs.camera_info.serial_number),
+            "model": dev.get_info(rs.camera_info.name),
+        })
+    return out
+
+
 class RealSenseSource(FrameSource):
     name = "realsense"
     description = "Intel RealSense D435 (colour stream)"
 
-    def __init__(self, width=1280, height=720, fps=15):
+    def __init__(self, width=1280, height=720, fps=15, serial: str | None = None):
         import pyrealsense2 as rs
         self._rs = rs
+        devices = list_realsense_devices()
+        if not devices:
+            raise RuntimeError("no RealSense device found")
+        if serial:
+            if serial not in [d["serial"] for d in devices]:
+                found = ", ".join(d["serial"] for d in devices)
+                raise RuntimeError(
+                    f"no RealSense with serial {serial!r} — connected: {found}")
+        elif len(devices) > 1:
+            # Recorded rigs run up to two D435 units (rgbd_1_color,
+            # rgbd_2_color). Picking devices[0] here would calibrate whichever
+            # one enumerates first, filed under whatever camera name the
+            # operator typed — silently wrong the moment those two disagree.
+            found = ", ".join(f"{d['serial']} ({d['model']})" for d in devices)
+            raise RuntimeError(
+                f"{len(devices)} RealSense devices connected ({found}) — "
+                f"specify which one by serial rather than guessing")
+        else:
+            serial = devices[0]["serial"]
+
         self.pipeline = rs.pipeline()
         cfg = rs.config()
+        cfg.enable_device(serial)
         # int, not float: pybind11 rejects a float framerate here.
         cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, int(fps))
         self.profile = self.pipeline.start(cfg)
+        self.serial = serial
+        self.model = next((d["model"] for d in devices if d["serial"] == serial), None)
 
     def factory_intrinsics(self) -> dict | None:
         """The D435 is factory-calibrated — this is independent ground truth to
@@ -180,6 +234,9 @@ class RealSenseSource(FrameSource):
         except Exception:
             return None
 
+    def device_info(self) -> dict | None:
+        return {"serial": self.serial, "model": self.model}
+
     def read(self):
         frames = self.pipeline.wait_for_frames(timeout_ms=5000)
         c = frames.get_color_frame()
@@ -192,6 +249,23 @@ class RealSenseSource(FrameSource):
             pass
 
 
+def list_basler_devices() -> list[dict]:
+    """Every Basler GigE camera currently visible on the network, serial first.
+
+    This rig has *two* Basler units. `record_all_5_cameras_macos.py` names
+    them `basler_1` / `basler_2` purely by `EnumerateDevices()` order — there
+    is no serial pinned to either name at the recorder level either. That
+    makes the serial number the only thing that actually identifies which
+    physical camera a calibration came from; the name typed into this tool is
+    just a label. Exists so a picker can show serials rather than the app
+    guessing which device index the operator meant.
+    """
+    from pypylon import pylon
+    tlf = pylon.TlFactory.GetInstance()
+    return [{"serial": d.GetSerialNumber(), "model": d.GetModelName()}
+            for d in tlf.EnumerateDevices() if "basler" in d.GetVendorName().lower()]
+
+
 class BaslerSource(FrameSource):
     name = "basler"
     description = "Basler GigE via pypylon"
@@ -200,18 +274,43 @@ class BaslerSource(FrameSource):
         from pypylon import pylon
         self._pylon = pylon
         tlf = pylon.TlFactory.GetInstance()
-        devices = [d for d in tlf.EnumerateDevices()
-                   if "basler" in d.GetVendorName().lower()]
-        if not devices:
+        infos = [d for d in tlf.EnumerateDevices()
+                if "basler" in d.GetVendorName().lower()]
+        if not infos:
             raise RuntimeError("no Basler cameras found")
         if serial:
-            devices = [d for d in devices if d.GetSerialNumber() == serial] or devices
-        self.camera = pylon.InstantCamera(tlf.CreateDevice(devices[0]))
+            matches = [d for d in infos if d.GetSerialNumber() == serial]
+            if not matches:
+                found = ", ".join(d.GetSerialNumber() for d in infos)
+                raise RuntimeError(
+                    f"no Basler camera with serial {serial!r} — "
+                    f"connected: {found}")
+            info = matches[0]
+        elif len(infos) > 1:
+            # Two Baslers on this rig, disambiguated by nothing but
+            # EnumerateDevices() order — which is also all the recorder uses
+            # to tell basler_1 from basler_2. Silently taking infos[0] here
+            # would calibrate whichever camera enumerates first and file it
+            # under whatever name the operator happened to type in, with
+            # nothing to catch the two disagreeing.
+            found = ", ".join(f"{d.GetSerialNumber()} ({d.GetModelName()})"
+                              for d in infos)
+            raise RuntimeError(
+                f"{len(infos)} Basler cameras connected ({found}) — specify "
+                f"which one by serial rather than guessing")
+        else:
+            info = infos[0]
+
+        self.camera = pylon.InstantCamera(tlf.CreateDevice(info))
         self.camera.Open()
-        self.serial = devices[0].GetSerialNumber()
+        self.serial = info.GetSerialNumber()
+        self.model = info.GetModelName()
         self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
         self.converter = pylon.ImageFormatConverter()
         self.converter.OutputPixelFormat = pylon.PixelType_BGR8packed
+
+    def device_info(self) -> dict | None:
+        return {"serial": self.serial, "model": self.model}
 
     def read(self):
         grab = self.camera.RetrieveResult(3000, self._pylon.TimeoutHandling_Return)
@@ -233,6 +332,29 @@ class LucidSource(FrameSource):
     name = "lucid"
     description = "Lucid Triton GigE via Aravis"
 
+    # GenICam PixelFormat strings we can hand to OpenCV, best first. Triton
+    # color units otherwise come up in whatever format was last persisted on
+    # the device (often Mono8) — if we don't set one explicitly, read() has
+    # no reliable way to tell "true Mono8" apart from "raw undebayered Bayer
+    # plane", and both are a single byte/pixel.
+    _PREFERRED_FORMATS = [
+        "BGR8", "RGB8", "BayerRG8", "BayerGB8", "BayerGR8", "BayerBG8",
+    ]
+    # GenICam pattern -> OpenCV constant, via the four-letter aliases, which
+    # spell out the full first-two-rows tile and are therefore unambiguous:
+    # GenICam BayerRG8 means a tile of R G / G B = "RGGB". Do NOT use the
+    # letter-for-letter two-letter names (COLOR_BayerRG2BGR etc.) — OpenCV's
+    # legacy two-letter names refer to the pattern at a DIFFERENT tile corner
+    # than GenICam's, so that obvious-looking mapping swaps red and blue on
+    # every frame. Verified empirically; the recorders in real_data/utils
+    # carry the same fix and the full derivation.
+    _BAYER_TO_CV = {
+        "BayerRG8": cv2.COLOR_BAYER_RGGB2BGR,   # == COLOR_BAYER_BG2BGR (46)
+        "BayerGB8": cv2.COLOR_BAYER_GBRG2BGR,   # == COLOR_BAYER_GR2BGR (49)
+        "BayerGR8": cv2.COLOR_BAYER_GRBG2BGR,   # == COLOR_BAYER_GB2BGR (47)
+        "BayerBG8": cv2.COLOR_BAYER_BGGR2BGR,   # == COLOR_BAYER_RG2BGR (48)
+    }
+
     def __init__(self, device_id: str | None = None):
         import gi
         gi.require_version("Aravis", "0.8")
@@ -248,13 +370,60 @@ class LucidSource(FrameSource):
                     break
         if device_id is None:
             raise RuntimeError("no Lucid device found")
+        self.device_id = device_id
         self.camera = Aravis.Camera.new(device_id)
-        self.camera.set_acquisition_mode(Aravis.AcquisitionMode.CONTINUOUS)
-        self.stream = self.camera.create_stream(None, None)
-        payload = self.camera.get_payload()
-        for _ in range(10):
-            self.stream.push_buffer(Aravis.Buffer.new_allocate(payload))
-        self.camera.start_acquisition()
+        self.pixel_format = self._configure_pixel_format()
+        try:
+            self.camera.set_acquisition_mode(Aravis.AcquisitionMode.CONTINUOUS)
+            self.stream = self.camera.create_stream(None, None)
+            payload = self.camera.get_payload()
+            for _ in range(10):
+                self.stream.push_buffer(Aravis.Buffer.new_allocate(payload))
+            self.camera.start_acquisition()
+        except Exception as e:
+            # "Controller privilege required for streaming control" — GigE
+            # Vision allows exactly one controlling process per camera. Name
+            # the actual fix rather than surfacing a bare GVCP error.
+            raise RuntimeError(
+                f"could not start streaming from the Lucid ({e}) — another "
+                f"process probably holds control of this camera. Close any "
+                f"other recorder/viewer session (including a stale app.py or "
+                f"ArenaView on another machine) and retry.") from e
+
+    def _configure_pixel_format(self) -> str:
+        try:
+            available = list(self.camera.dup_available_pixel_formats_as_strings())
+        except Exception:
+            available = []
+        for fmt in self._PREFERRED_FORMATS:
+            if available and fmt not in available:
+                continue
+            try:
+                self.camera.set_pixel_format_from_string(fmt)
+                return fmt
+            except Exception:
+                # A write can fail even for a format the camera supports:
+                # GigE Vision grants CONTROLLER access to exactly one process,
+                # and everyone else is read-only. Diagnosed live on this rig
+                # (TRI032S-C): every PixelFormat write returned access-denied
+                # while another process held the camera. Fall through and use
+                # whatever format is actually active — read() decodes Bayer
+                # correctly either way.
+                continue
+        # Nothing writable (or genuinely mono-only) — read back what the
+        # camera is actually in rather than assuming.
+        active = self.camera.get_pixel_format_as_string()
+        print(f"[lucid] could not set any pixel format — camera is in "
+              f"'{active}' (another process may hold GigE controller access)")
+        return active
+
+    def device_info(self) -> dict | None:
+        # Only one physical Lucid is on this rig, found by vendor/model
+        # substring rather than a picked serial — reported here anyway so a
+        # saved calibration still carries something to cross-check if that
+        # ever changes.
+        return {"serial": self.device_id, "model": None,
+                "pixel_format": self.pixel_format}
 
     def read(self):
         buf = self.stream.timeout_pop_buffer(2_000_000)
@@ -265,11 +434,18 @@ class LucidSource(FrameSource):
                 return None
             w, h = buf.get_image_width(), buf.get_image_height()
             arr = np.frombuffer(buf.get_data(), dtype=np.uint8)
-            n = arr.size // (w * h)
-            if n == 3:
-                img = arr.reshape(h, w, 3).copy()
+            fmt = self.pixel_format
+            if fmt == "BGR8":
+                img = arr[: h * w * 3].reshape(h, w, 3).copy()
+            elif fmt == "RGB8":
+                rgb = arr[: h * w * 3].reshape(h, w, 3)
+                img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            elif fmt in self._BAYER_TO_CV:
+                bayer = arr[: h * w].reshape(h, w)
+                img = cv2.cvtColor(bayer, self._BAYER_TO_CV[fmt])
             else:
-                img = cv2.cvtColor(arr.reshape(h, w).copy(), cv2.COLOR_GRAY2BGR)
+                mono = arr[: h * w].reshape(h, w).copy()
+                img = cv2.cvtColor(mono, cv2.COLOR_GRAY2BGR)
             return img
         finally:
             self.stream.push_buffer(buf)
@@ -290,21 +466,48 @@ AVAILABLE = {
 }
 
 
+_DEVICE_LISTERS = {"basler": list_basler_devices, "realsense": list_realsense_devices}
+
+
 def probe() -> list[dict]:
-    """Which sources can actually be used right now, and why not if not."""
+    """Which sources can actually be used right now, and why not if not.
+
+    Where more than one physical unit of a kind can be on the rig at once —
+    both Baslers, potentially two RealSense — also enumerates the connected
+    devices by serial, so the UI can offer a picker instead of the source
+    silently guessing which camera was meant. Enumeration failures (SDK
+    present but nothing plugged in, USB not permissioned yet) are swallowed
+    here: they surface properly once a session actually tries to open one.
+    """
     out = [
         {"id": "synthetic", "label": "Synthetic camera (no hardware)",
-         "available": True, "note": "Known K/D — use to test the whole flow"},
+         "available": True, "note": "Known K/D — use to test the whole flow",
+         "devices": []},
         {"id": "folder", "label": "Folder of images",
-         "available": True, "note": "Point at a directory of captures"},
+         "available": True, "note": "Point at a directory of captures",
+         "devices": []},
     ]
     for sid, label, mod in (("realsense", "Intel RealSense D435", "pyrealsense2"),
                             ("basler", "Basler GigE", "pypylon"),
                             ("lucid", "Lucid Triton (Aravis)", "gi")):
+        devices = []
         try:
             __import__(mod)
             ok, note = True, "SDK present — camera must be connected"
+            lister = _DEVICE_LISTERS.get(sid)
+            if lister:
+                try:
+                    devices = lister()
+                    if len(devices) > 1:
+                        note = f"{len(devices)} connected — pick one by serial"
+                    elif len(devices) == 1:
+                        note = f"1 connected: S/N {devices[0]['serial']}"
+                    else:
+                        note = "SDK present — no device found"
+                except Exception:
+                    pass
         except ImportError:
             ok, note = False, f"{mod} not installed"
-        out.append({"id": sid, "label": label, "available": ok, "note": note})
+        out.append({"id": sid, "label": label, "available": ok, "note": note,
+                    "devices": devices})
     return out

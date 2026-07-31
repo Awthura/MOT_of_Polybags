@@ -172,6 +172,47 @@ Both pages write the same per-camera file, and a save never discards the other
 half: saving intrinsics at the bench keeps a pose solved earlier at the rig,
 flagging it stale rather than deleting it if the intrinsics changed under it.
 
+**Which physical camera, not just which name.** This rig has two Basler units
+told apart by nothing but enumeration order, so a **Device** field appears
+whenever more than one unit of a kind is connected — pick one rather than the
+tool guessing which camera answers first. The serial actually connected to is
+recorded into the saved calibration; if the same serial ever turns up under
+two different camera names, both status-board rows say so. A folder replay has
+no live hardware to ask, so the same field there accepts a typed serial
+instead — recorded as *asserted*, not hardware-confirmed, and always shown
+that way.
+
+**Adopting factory intrinsics directly.** The RealSense reports its own
+`fx, fy, ppx, ppy` and distortion model from the sensor. A green banner offers
+**Use factory intrinsics** the moment a RealSense session starts — no board
+capture needed. Doing the board fit once and comparing against those factory
+numbers (the "vs known reference" panel) is still the acceptance test for the
+method itself; adopting them directly is the fast path for every session after
+that.
+
+**Clearing a saved calibration.** Both pages can delete a camera's saved
+result outright — a **Clear saved calibration** button on the intrinsics page
+(keyed to the typed camera name) and a **Clear** button per row on the rig
+status board. Removes intrinsics and any pose together, since the file holds
+both and there is no smaller unit to remove; asks for confirmation first.
+
+**Not just conveyors.** Every camera is solved against one shared plane; that
+the plane is a belt here is a naming convention, not a constraint. Panel B2 on
+the rig page takes a top-down map of whatever plane a rig watches — a floor
+plan, a CAD export, an overhead photo (`.png`/`.jpg`) or a scan (`.glb`) — and
+renders footprints, coverage and overlap against it.
+
+A GLB georeferences itself: glTF fixes lengths at metres and defines an
+origin, so scale and world origin come out of the file with nothing to click.
+A PNG carries no units and must be told two things — where world (0, 0) sits,
+and what a pixel is worth (typed, or measured from two clicks and a tape).
+Until it has both, the map is treated as a picture and the belt dimensions are
+used instead; a metric overlay against unknown units would be confident
+nonsense. An optional +Y click rotates the map so the plane's natural axis is
+aligned, baked into the stored image rather than carried as a term through
+every later transform. Grid spacing follows the map extent, so the same code
+reads correctly on a 0.2 m jig and a 120 m line.
+
 Verify the maths independently at any time:
 
 ```bash

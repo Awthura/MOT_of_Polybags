@@ -23,6 +23,7 @@ connected to hardware, paste the traceback — likely a quick fix (pixel-format
 string or auto-exposure enum), not a redesign.
 """
 
+import re
 import cv2
 import numpy as np
 from datetime import datetime
@@ -246,6 +247,62 @@ class BaslerWorker(CameraWorker):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Lucid pixel-format negotiation and decoding — see record_all_5_cameras_macos.py
+# for the full diagnosis. Short version: raw Aravis needs GVCP controller
+# access to write PixelFormat; when something else holds it, EVERY format
+# write fails silently, and the old code fell back to whatever was already
+# active with no visible warning. Separately, the debayer step hardcoded
+# cv2.COLOR_BAYER_BG2BGR regardless of which Bayer variant the camera actually
+# reported — GenICam and OpenCV do not name Bayer patterns the same way
+# (verified against OpenCV's own RGGB/BGGR/GRBG/GBRG aliases):
+#
+#   BayerRG8 -> COLOR_BAYER_BG2BGR   BayerBG8 -> COLOR_BAYER_RG2BGR
+#   BayerGR8 -> COLOR_BAYER_GB2BGR   BayerGB8 -> COLOR_BAYER_GR2BGR
+LUCID_PIXEL_FORMAT_PREFERENCE = (
+    'BGR8', 'RGB8', 'BayerRG8', 'BayerGB8', 'BayerGR8', 'BayerBG8', 'Mono8',
+)
+_GENICAM_TO_CV_BAYER = {
+    'RG': cv2.COLOR_BAYER_BG2BGR, 'BG': cv2.COLOR_BAYER_RG2BGR,
+    'GR': cv2.COLOR_BAYER_GB2BGR, 'GB': cv2.COLOR_BAYER_GR2BGR,
+}
+
+
+def negotiate_lucid_pixel_format(camera, log_prefix="[Lucid]"):
+    for fmt in LUCID_PIXEL_FORMAT_PREFERENCE:
+        try:
+            camera.set_pixel_format_from_string(fmt)
+            return fmt
+        except Exception:
+            continue
+    active = camera.get_pixel_format_as_string()
+    print(f"\n{'!' * 70}\n{log_prefix} WARNING: could not set ANY pixel format "
+          f"(tried {LUCID_PIXEL_FORMAT_PREFERENCE}).\n"
+          f"{log_prefix} Camera is running with whatever format it already had: "
+          f"'{active}'.\n"
+          f"{log_prefix} This usually means another process or device on the "
+          f"network already holds GigE Vision controller access to this "
+          f"camera — check for a Lucid viewer app, a leftover recorder run, "
+          f"or another machine on the same switch, and close it.\n"
+          f"{log_prefix} If '{active}' is 'Mono8' the recording will have NO "
+          f"colour at all. If it's a Bayer format, colour will still decode "
+          f"correctly (the debayer step below reads the actual pattern), but "
+          f"none of exposure/gain/region/frame-rate settings below could be "
+          f"applied either — verify the recording afterwards.\n{'!' * 70}\n")
+    return active
+
+
+def decode_lucid_frame(arr, bw, bh, chosen_fmt):
+    if chosen_fmt == 'BGR8':
+        return arr.reshape(bh, bw, 3).copy()
+    if chosen_fmt == 'RGB8':
+        return cv2.cvtColor(arr.reshape(bh, bw, 3), cv2.COLOR_RGB2BGR)
+    m = re.search(r'Bayer(RG|GB|GR|BG)', chosen_fmt)
+    if m:
+        return cv2.cvtColor(arr.reshape(bh, bw), _GENICAM_TO_CV_BAYER[m.group(1)])
+    return cv2.cvtColor(arr.reshape(bh, bw), cv2.COLOR_GRAY2BGR)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LucidWorker — NEW: same class name and constructor shape the rest of this
 # script expects, but backed by Aravis (GigE Vision) instead of Arena SDK.
 # GigE bandwidth-tuning values (packet size 1400, GevSCPD 40000ns) are carried
@@ -290,16 +347,7 @@ class LucidWorker(CameraWorker):
             print(f"[{self.name}] Resolution: {self.width}x{self.height}")
 
             # ── Pixel format ─────────────────────────────────────────────
-            chosen_fmt = None
-            for fmt in ('BGR8', 'RGB8'):
-                try:
-                    camera.set_pixel_format_from_string(fmt)
-                    chosen_fmt = fmt
-                    break
-                except Exception:
-                    continue
-            if chosen_fmt is None:
-                chosen_fmt = camera.get_pixel_format_as_string()
+            chosen_fmt = negotiate_lucid_pixel_format(camera, log_prefix=f"[{self.name}]")
             print(f"[{self.name}] Pixel format: {chosen_fmt}")
 
             # ── Manual exposure — start at a safe dim value ───────────────
@@ -397,14 +445,7 @@ class LucidWorker(CameraWorker):
                     data = buf.get_data()
                     arr  = np.frombuffer(data, dtype=np.uint8)
 
-                    if chosen_fmt == 'BGR8':
-                        frame = arr.reshape(bh, bw, 3).copy()
-                    elif chosen_fmt == 'RGB8':
-                        frame = cv2.cvtColor(arr.reshape(bh, bw, 3), cv2.COLOR_RGB2BGR)
-                    elif 'Bayer' in chosen_fmt:
-                        frame = cv2.cvtColor(arr.reshape(bh, bw), cv2.COLOR_BAYER_BG2BGR)
-                    else:
-                        frame = cv2.cvtColor(arr.reshape(bh, bw), cv2.COLOR_GRAY2BGR)
+                    frame = decode_lucid_frame(arr, bw, bh, chosen_fmt)
 
                     if frame.shape[1] != self.width or frame.shape[0] != self.height:
                         frame = cv2.resize(frame, (self.width, self.height))

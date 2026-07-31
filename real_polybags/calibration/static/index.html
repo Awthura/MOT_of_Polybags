@@ -39,13 +39,25 @@
         <label for="folder">Image folder</label>
         <input id="folder" size="34" placeholder="/path/to/captures">
       </div>
+      <div class="field" id="device-field" style="display:none">
+        <label for="device">Device serial</label>
+        <input id="device" list="device-list" size="18" placeholder="serial">
+        <datalist id="device-list"></datalist>
+      </div>
       <div class="field">
         <label for="board">Board</label>
         <select id="board"></select>
       </div>
       <button id="btn-start" class="accent">Start session</button>
+      <button id="btn-clear-camera" class="ghost danger" type="button"
+              title="Delete the saved calibration for this camera name — intrinsics and any pose">
+        Clear saved calibration
+      </button>
     </div>
     <div class="note" id="source-note"></div>
+    <div class="note" id="device-note"></div>
+    <div id="device-banner" class="banner hidden"></div>
+    <div id="factory-banner" class="banner hidden"></div>
   </section>
 
   <!-- 2 · Capture -->
@@ -102,6 +114,7 @@
             correct calibration from a merely plausible one.
           </p>
         </div>
+        <div id="factory-box" class="banner hidden"></div>
         <ul class="warnings" id="warnings"></ul>
       </div>
     </div>
@@ -148,6 +161,7 @@
         <input id="bres" type="number" value="2" step="0.5" min="0.5" size="8"></div>
       <button id="btn-map">Build belt map</button>
     </div>
+    <div id="map-ws-note" class="banner hidden"></div>
     <div class="split" style="margin-top:12px">
       <div id="map-wrap" style="background:#111;border-radius:var(--radius);padding:8px;overflow:auto;max-height:640px">
         <img id="map-img" style="max-width:100%;display:none" alt="belt map">

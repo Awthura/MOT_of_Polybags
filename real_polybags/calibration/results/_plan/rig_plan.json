@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "updated_utc": "2026-07-31T05:08:06+00:00",
+  "method": "A",
+  "belt": {
+    "width_mm": 700.0,
+    "length_mm": 1400.0
+  },
+  "cameras": [
+    {
+      "name": "basler_1",
+      "expected_height_mm": 0.0,
+      "origin_offset_mm": [
+        0.0,
+        0.0
+      ],
+      "offset_measured": false,
+      "note": ""
+    },
+    {
+      "name": "basler_2",
+      "expected_height_mm": null,
+      "origin_offset_mm": [
+        0.0,
+        0.0
+      ],
+      "offset_measured": false,
+      "note": ""
+    },
+    {
+      "name": "lucid",
+      "expected_height_mm": null,
+      "origin_offset_mm": [
+        0.0,
+        0.0
+      ],
+      "offset_measured": false,
+      "note": ""
+    },
+    {
+      "name": "rgbd_1_color",
+      "expected_height_mm": null,
+      "origin_offset_mm": [
+        0.0,
+        0.0
+      ],
+      "offset_measured": false,
+      "note": ""
+    },
+    {
+      "name": "rgbd_2_color",
+      "expected_height_mm": null,
+      "origin_offset_mm": [
+        0.0,
+        0.0
+      ],
+      "offset_measured": false,
+      "note": ""
+    }
+  ]
+}

@@ -30,6 +30,14 @@
 *.stl
 *.obj
 *.fbx
+*.glb
+*.gltf
+
+# Uploaded workspace maps live here — a scan of the cell plus its rendered
+# top-down PNG. Rig-specific and potentially large, so the artefacts stay
+# local; the georeferencing metadata (meta.json) is small, but is kept out
+# too since it is meaningless without the image it refers to.
+real_polybags/calibration/results/_workspace/
 
 # PDF (generated from .md sources)
 *.pdf

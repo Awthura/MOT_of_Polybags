@@ -101,6 +101,87 @@
     <p class="note" id="method-note"></p>
   </section>
 
+  <!-- B2 · Workspace map -->
+  <section class="panel">
+    <h2><span class="step">B2</span> Workspace map <span class="pill idle">optional</span></h2>
+    <p class="note" style="margin-top:0">
+      The world plane does not have to be a conveyor. Upload a top-down map of
+      whatever plane this rig watches — a floor plan, a CAD export, a stitched
+      photo (<code>.png</code>/<code>.jpg</code>) or a <code>.glb</code> model —
+      and camera footprints, coverage and overlap render against it instead of a
+      blank rectangle. Without one, the belt width and length above are used, so
+      this is purely additive.
+    </p>
+
+    <div class="row">
+      <input type="file" id="ws-file" accept=".png,.jpg,.jpeg,.glb"
+             style="max-width:320px">
+      <button id="btn-ws-upload" class="accent">Upload map</button>
+      <button id="btn-ws-clear" class="danger">Remove map</button>
+    </div>
+    <div id="ws-state" class="banner hidden"></div>
+
+    <div class="split hidden" id="ws-body" style="margin-top:12px">
+      <div>
+        <div id="ws-viewport" style="position:relative;background:#111;
+             border-radius:var(--radius);overflow:auto;max-height:520px">
+          <img id="ws-img" style="display:block;max-width:100%;cursor:crosshair"
+               alt="workspace map">
+          <div id="ws-marker-origin" class="ws-marker hidden"></div>
+          <div id="ws-marker-a" class="ws-marker alt hidden"></div>
+          <div id="ws-marker-b" class="ws-marker alt hidden"></div>
+        </div>
+        <p class="note" id="ws-click-hint">Upload a map to begin.</p>
+      </div>
+
+      <div>
+        <strong class="caps">Georeference</strong>
+        <p class="note" style="margin-top:6px">
+          An image carries no units. Two things make it a map: where world
+          <strong>(0, 0)</strong> sits, and what a pixel is worth in
+          millimetres. A <code>.glb</code> supplies both from the model itself
+          (glTF fixes metres and the model origin) and skips this entirely.
+        </p>
+
+        <div class="row" style="margin-top:8px">
+          <button id="btn-ws-pick-origin" class="ghost small">1 · Click the origin</button>
+        </div>
+        <div class="stat"><span class="k">origin</span>
+          <span class="v" id="ws-origin-val">—</span></div>
+
+        <div class="row" style="margin-top:12px">
+          <button id="btn-ws-pick-scale" class="ghost small">2 · Click two known points</button>
+          <div class="field">
+            <label for="ws-dist">distance between them (mm)</label>
+            <input id="ws-dist" type="number" step="1" size="9" placeholder="e.g. 3500">
+          </div>
+          <button id="btn-ws-apply-scale" class="ghost small">Apply</button>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="ws-mmpp">…or type mm per pixel directly</label>
+            <input id="ws-mmpp" type="number" step="0.01" size="9">
+          </div>
+          <button id="btn-ws-apply-mmpp" class="ghost small">Set</button>
+        </div>
+        <div class="stat"><span class="k">scale</span>
+          <span class="v" id="ws-scale-val">—</span></div>
+
+        <div class="row" style="margin-top:12px">
+          <button id="btn-ws-pick-axis" class="ghost small">3 · Click a point along +Y <span class="pill idle">optional</span></button>
+        </div>
+        <p class="note">
+          World +X runs right and +Y runs down the map. If the plane's natural
+          axis (belt travel, aisle direction) is not aligned that way, click a
+          point along it — the rotation is baked into the stored image once,
+          rather than carried as a term through every later transform.
+        </p>
+
+        <div id="ws-status" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- C · Solve -->
   <section class="panel">
     <h2><span class="step">C</span> Solve a camera's belt pose</h2>
@@ -117,6 +198,11 @@
         <label for="folder">Image folder</label>
         <input id="folder" size="30" placeholder="/path/to/captures">
       </div>
+      <div class="field" id="device-field" style="display:none">
+        <label for="device">Device serial</label>
+        <input id="device" list="device-list" size="18" placeholder="serial">
+        <datalist id="device-list"></datalist>
+      </div>
       <div class="field">
         <label for="board">Board on the belt</label>
         <select id="board"></select>
@@ -124,6 +210,8 @@
       <button id="btn-start" class="accent">Start session</button>
     </div>
     <div class="note" id="source-note"></div>
+    <div class="note" id="device-note"></div>
+    <div id="device-banner" class="banner hidden"></div>
     <div id="intr-state" class="banner hidden"></div>
 
     <div class="split hidden" id="solve-body" style="margin-top:14px">
