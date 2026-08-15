@@ -1,0 +1,4 @@
+dataset/
+logs/
+best.pt
+*.pt
