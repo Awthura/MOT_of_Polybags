@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera System Digital Twin</title>
+<style>
+  :root { --bg:#0d0f13; --panel:#161a21; --line:#262c36; --ink:#e7edf3; --sub:#9aa7b4; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; overflow:hidden; }
+  #app { display:flex; flex-direction:column; height:100%; }
+  header { display:flex; align-items:center; gap:12px; padding:8px 14px;
+    background:var(--panel); border-bottom:1px solid var(--line); }
+  header .title { font-weight:600; }
+  header .sub { color:var(--sub); font-size:12px; }
+  header .spacer { margin-left:auto; }
+  header .pill { font:600 11px/1 monospace; padding:5px 9px; border-radius:6px;
+    background:#20262f; color:var(--sub); }
+  main { flex:1; display:grid; grid-template-columns:1.7fr 1fr; gap:0; min-height:0; }
+  /* LEFT — four synchronous camera feeds */
+  #feeds { padding:10px; display:grid; grid-template-columns:1fr 1fr;
+    grid-auto-rows:1fr; gap:10px; min-height:0; }
+  .feed { position:relative; background:#000; border:1px solid var(--line);
+    border-radius:10px; overflow:hidden; display:flex; align-items:center;
+    justify-content:center; min-height:0; }
+  .feed img { width:100%; height:100%; object-fit:contain; display:block; }
+  .feed .tag { position:absolute; top:6px; left:6px; font:600 11px/1 monospace;
+    background:rgba(0,0,0,.6); padding:4px 7px; border-radius:6px; }
+  .feed .tag.homog { color:#ffd23f; }
+  /* RIGHT — digital twin (narrower) */
+  #twin { border-left:1px solid var(--line); min-height:0; }
+  #twin iframe { width:100%; height:100%; border:0; display:block; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <div class="title">Camera System Digital Twin</div>
+      <div class="sub" id="hdr-sub">four camera feeds → belt projection → MQTT → map</div>
+    </div>
+    <span class="spacer"></span>
+    <span class="pill" id="pill-session">session —</span>
+    <span class="pill">left: detections · right: /polybags on the twin</span>
+  </header>
+  <main>
+    <section id="feeds"></section>
+    <section id="twin"><iframe src="/dashboard/" title="digital twin"></iframe></section>
+  </main>
+</div>
+<script>
+(async function () {
+  const cfg = await (await fetch("/api/config")).json();
+  document.getElementById("pill-session").textContent = "session " + cfg.session;
+  const feeds = document.getElementById("feeds");
+  feeds.innerHTML = cfg.cameras.map(c => `
+    <div class="feed">
+      <span class="tag ${c.metric ? "" : "homog"}">${c.name}${c.metric ? "" : " · homography"}</span>
+      <img src="/stream/${c.name}" alt="${c.name} feed">
+    </div>`).join("");
+})();
+</script>
+</body>
+</html>

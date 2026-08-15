@@ -1,0 +1,93 @@
+# algorithm/ — camera -> digital-twin live map, configuration.
+# Paths are resolved relative to the algorithm/ directory (this file's folder).
+
+# Recording session to replay.
+#   20260528_092854 = Single_Polybags_1_moving — bags actually MOVE (motion
+#     ~18/9/8 for basler_1/2/lucid); same session the model was trained on; has
+#     basler_1, basler_2, lucid only (no rgbd_1_color video exists for it).
+#   20260727_140907 = all four calibrated cameras but bags are STATIC (motion ~0.8).
+# Set `paths.video_dir` + `cameras` to match the session you pick.
+session: "20260528_092854"
+
+paths:
+  # Moving session lives here; use "../real_data/raw_recordings" for 140907 (static).
+  video_dir: "../experiments/Single_Polybags_1_moving"
+  results_dir: "../calibration/results"
+  workspace_meta: "../calibration/results/_workspace/meta.json"
+  map_png: "../calibration/results/_workspace/map.png"
+
+# The map the dashboard draws polybags on. The clean synthetic belt
+# (conveyor_dashboard.png, 580x2000 mm @ 1 mm/px, no scan clutter) reads far
+# better than the raw scan render. Its georef is by construction: world origin
+# at pixel (W/2, origin_offset) = (290, 400), +X across (image right),
+# +Y along the belt (image down) — the same frame the homography outputs.
+# Set display.map to "workspace" to fall back to the scan map + its meta.json.
+display:
+  map: "dashboard"                                             # "dashboard" | "workspace"
+  map_png: "../calibration/datasets/dashboard/conveyor_dashboard.png"
+  origin_px: [290, 400]
+  mm_per_px: 1.0
+
+# Cameras to run, in display order. Each must have a results/<cam>.json with a
+# solved extrinsics.H_image_to_belt. basler_1/2 are metric (intrinsics + pose);
+# lucid / rgbd_1_color are homography-only (distortion uncorrected at edges).
+cameras:
+  # Moving session 092854 has these three. Add rgbd_1_color back (and switch
+  # video_dir/session) for the static 140907 four-camera set.
+  - basler_1
+  - basler_2
+  - lucid
+
+# The two Basler calibrations were solved on swapped frames during recording
+# processing, so each Basler video must be projected with the OTHER's stored
+# calibration. Verified: swapping brings the two cameras into ~10 mm agreement
+# on the same physical bags (vs ~108 mm unswapped). This maps a video (key) to
+# the results/<value>.json it should use; it does NOT modify any calibration file.
+calib_overrides:
+  basler_1: basler_2
+  basler_2: basler_1
+
+detector:
+  # polybag_v1 — YOLO11s detect, trained on the cluster from labels_final_v3
+  # (val P=0.965 R=0.812 mAP50=0.864). Axis-aligned; foot-point uses bbox bottom.
+  # Previous: ../preliminary_results/yolo_obb_detector/best.pt (OBB, noisy).
+  model_path: "../training/yolo_polybag_v1/best.pt"
+  imgsz: 960
+  conf: 0.25
+  iou: 0.5
+  device: ""          # "" = auto (mps on this Mac), or "cpu"
+  reference_point: "center"   # "center" (bbox centre) | "foot" (bbox bottom-centre)
+
+playback:
+  fps: 5              # max inference-loop tick rate (inference is usually the limit)
+  loop: true
+  # Cameras recorded the same event at different real rates and frame counts, so
+  # they are played on a shared normalized timeline (in sync). event_fps ~ the
+  # fastest camera's real capture rate; period = longest_video_frames/event_fps
+  # gives roughly real-time. speed<1 = slow motion (more inference samples per bag).
+  event_fps: 15
+  speed: 1.0
+  # Per-camera fine start-offset in seconds (added to its shared-timeline
+  # position) for any residual skew the frame-count normalization can't remove.
+  # 0 = none. A scan hinted basler_2 may lead by ~1s but it was too noisy to set.
+  sync_offset: {}     # e.g. { basler_2: 1.0 }
+
+# Conveyor boundaries in world mm. A detection whose projected point falls
+# outside this rectangle is dropped (not tracked, not published, not drawn) —
+# it is off the belt, almost always a false positive. Matches the clean belt
+# map extent: across X in [-290,290] (580 mm wide), along Y in [-400,1600].
+belt_bounds:
+  x_mm: [-290, 290]
+  y_mm: [-400, 1600]
+
+mqtt:
+  host: "127.0.0.1"   # IPv4 loopback (avoids macOS localhost->::1 ambiguity)
+  port: 1883          # tcp — the streamer publishes here
+  ws_port: 9001       # websockets — the browser dashboard subscribes here
+  topic: "/polybags"
+  publish_hz: 6       # steady publish cadence, decoupled from inference (anti-flicker)
+  track_ttl_s: 1.5    # dashboard drops a track not seen for this long (> a few slow ticks)
+
+server:
+  host: "127.0.0.1"
+  port: 5002

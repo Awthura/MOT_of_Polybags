@@ -1,0 +1,9 @@
+# algorithm/ runtime deps. cv2 + numpy come with the calibration tool.
+ultralytics>=8.2      # YOLO detect / OBB inference
+paho-mqtt>=2.0        # MQTT publisher (streamer -> broker)
+flask>=3.0            # streamer HTTP server (MJPEG feeds + static pages)
+pyyaml>=6.0           # config.yaml
+numpy
+opencv-python
+# Broker: Mosquitto (system package), run with algorithm/mosquitto.conf.
+# Browser MQTT client (mqtt.js) is vendored under dashboard/vendor/.
