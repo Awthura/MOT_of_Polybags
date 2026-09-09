@@ -84,6 +84,11 @@ pilot_instructions.md
 
 # YOLO training output
 runs/
+weights/
+
+# Curated local video sets for the digital-twin demo (avi are large + gitignored;
+# their timestamp CSVs/metadata belong with them, so keep the whole dir local).
+real_polybags/algorithm/videos/
 
 # Python
 __pycache__/

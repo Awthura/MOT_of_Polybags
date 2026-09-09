@@ -45,6 +45,32 @@ CAM_COLORS = {                    # BGR, kept in sync with the dashboard palette
     "rgbd_1_color": (200, 40, 200),
 }
 
+# Our lowercase camera keys -> the CamelCase names the recorder used in the
+# timestamp CSV filenames (timestamps_<Name>_<session>.csv).
+CSV_CAM_NAME = {
+    "basler_1": "Basler_1", "basler_2": "Basler_2",
+    "lucid": "Lucid", "rgbd_1_color": "RGBD_1", "rgbd_2_color": "RGBD_2",
+}
+
+
+def load_frame_times(video_dir: Path, name: str, session: str):
+    """Per-frame unix_time array from timestamps_<Cam>_<session>.csv, or None.
+
+    These are the camera's own device timestamps, the only thing that makes a
+    real (fusion-grade) cross-camera alignment possible. Recordings made before
+    the recorder logged them have no CSV -> None -> caller falls back to the
+    approximate normalized timeline.
+    """
+    import csv as _csv
+    p = video_dir / f"timestamps_{CSV_CAM_NAME.get(name, name)}_{session}.csv"
+    if not p.exists():
+        return None
+    times = []
+    with open(p, newline="") as fh:
+        for row in _csv.DictReader(fh):
+            times.append(float(row["unix_time"]))
+    return np.asarray(times, float) if times else None
+
 
 class Stream:
     """One camera: its frames (pre-loaded for random access), calibration, tracker.
@@ -74,14 +100,29 @@ class Stream:
                 self.jpegs.append(buf.tobytes())
         c.release()
         self.count = len(self.jpegs)
+        self.times = None          # per-frame time in seconds; set by the engine
 
-    def frame_at(self, p: float):
-        """Decoded frame at normalized progress p in [0,1), and its index."""
+    def set_times(self, times) -> None:
+        self.times = np.asarray(times, float)[:self.count]
+
+    def frame_at_time(self, t: float):
+        """Decoded frame whose timestamp is nearest t (seconds), and its index.
+
+        `self.times` is sorted, so a binary search finds the bracketing frames
+        and we keep the closer one. This is the sync primitive: feed the same t
+        to every camera and each returns its frame at that shared instant.
+        """
         if self.count == 0:
             return None, -1
-        idx = min(int(p * self.count), self.count - 1)
-        f = cv2.imdecode(np.frombuffer(self.jpegs[idx], np.uint8), cv2.IMREAD_COLOR)
-        return f, idx
+        i = int(np.searchsorted(self.times, t))
+        if i <= 0:
+            i = 0
+        elif i >= self.count:
+            i = self.count - 1
+        elif abs(self.times[i - 1] - t) <= abs(self.times[i] - t):
+            i -= 1
+        f = cv2.imdecode(np.frombuffer(self.jpegs[i], np.uint8), cv2.IMREAD_COLOR)
+        return f, i
 
 
 class Engine:
@@ -89,17 +130,35 @@ class Engine:
 
     def __init__(self, cfg):
         self.cfg = cfg
-        self.session = cfg["session"]
+        # Resolve the active scenario (video source + session + cameras).
+        sc_name = cfg.get("scenario")
+        scenarios = cfg.get("scenarios") or {}
+        sc = scenarios.get(sc_name)
+        if sc is None:
+            raise ValueError(f"unknown scenario {sc_name!r}; "
+                             f"choices: {list(scenarios)}")
+        self.scenario = sc_name
+        self.scenario_label = sc.get("label", sc_name)
+        self.session = sc["session"]
+        self.cameras = sc["cameras"]
+        self.video_dir = _resolve(cfg, sc["video_dir"])
+        print(f"[engine] scenario '{sc_name}' ({self.scenario_label}) "
+              f"session={self.session}")
         self.fps = float(cfg["playback"]["fps"])
         self.georef, self.map_png = _display_map(cfg)
 
         d = cfg["detector"]
-        self.detector = Detector(_resolve(cfg, d["model_path"]),
+        # `model` is a key into `models` (seg|detect), or a literal .pt path.
+        mkey = d.get("model") or d.get("model_path")
+        mpath = (d.get("models") or {}).get(mkey, mkey)
+        print(f"[engine] detector: {mkey}  ({mpath})")
+        self.detector = Detector(_resolve(cfg, mpath),
                                  d["imgsz"], d["conf"], d["iou"], d["device"])
         # Which pixel of a detection is projected onto the belt: bbox centre
         # (default) or foot. Centre is steadier for flat bags than the bottom,
         # which carries view-dependent parallax.
         self.ref_point = d.get("reference_point", "center")
+        self.draw_masks = bool(d.get("draw_masks", True))   # False = plain bboxes
 
         # Conveyor bounds (world mm): projections outside are dropped as off-belt.
         b = cfg.get("belt_bounds") or {}
@@ -107,22 +166,20 @@ class Engine:
         self.belt_y = b.get("y_mm", [-1e9, 1e9])
 
         results_dir = cfg.path("results_dir")
-        overrides = cfg.get("calib_overrides") or {}
         m = cfg["mqtt"]
         self.streams: dict[str, Stream] = {}
-        for name in cfg["cameras"]:
-            calib_name = overrides.get(name, name)   # e.g. basler_1 video -> basler_2 calib
+        for name in self.cameras:
+            # Video files are named to match the calibration, so each camera
+            # simply uses its own results/<name>.json — no swaps to worry about.
             try:
-                cam = calib.load_camera(calib_name, results_dir)
+                cam = calib.load_camera(name, results_dir)
             except (FileNotFoundError, ValueError) as e:
                 print(f"[engine] skipping {name}: {e}")
                 continue
-            vid = cfg.path("video_dir") / f"{name}_1280x720_{self.session}.avi"
+            vid = self.video_dir / f"{name}_1280x720_{self.session}.avi"
             if not vid.exists():
                 print(f"[engine] no video for {name}: {vid.name}")
                 continue
-            if calib_name != name:
-                print(f"[engine] {name} video uses {calib_name} calibration (override)")
             self.streams[name] = Stream(name, vid, cam, Tracker(ttl_s=m["track_ttl_s"]))
         for n, st in self.streams.items():
             print(f"[engine] {n}: {st.count} frames")
@@ -136,18 +193,45 @@ class Engine:
         self.event_fps = float(pb.get("event_fps", 15))
         self.speed = float(pb.get("speed", 1.0))
         self.sync_offset = pb.get("sync_offset") or {}   # per-camera seconds
-        self.max_count = max((st.count for st in self.streams.values()), default=1)
-        self.period = max(self.max_count / self.event_fps, 1e-3)
+
+        # Prefer real device timestamps (true, fusion-grade sync). Only if every
+        # camera has a CSV; otherwise fall back to the normalized timeline, which
+        # assumes the cameras started/stopped together and paced uniformly.
+        raw = {}
+        have_all = bool(self.streams)
+        for name, st in self.streams.items():
+            t = load_frame_times(self.video_dir, name, self.session)
+            if t is None or len(t) < st.count:
+                have_all = False
+                break
+            raw[name] = t[:st.count]
+        if have_all:
+            t0 = min(float(v[0]) for v in raw.values())
+            for name, st in self.streams.items():
+                st.set_times(raw[name] - t0)          # seconds since global start
+            self.duration = max(float(st.times[-1]) for st in self.streams.values())
+            self.sync_mode = "timestamp"
+        else:
+            maxc = max((st.count for st in self.streams.values()), default=1)
+            self.duration = max(maxc / self.event_fps, 1e-3)
+            for st in self.streams.values():
+                st.set_times(np.arange(st.count) * self.duration / max(st.count, 1))
+            self.sync_mode = "normalized"
+        print(f"[engine] sync mode: {self.sync_mode}  (loop {self.duration:.1f}s)")
         self._t_start = time.time()
 
         self.pub = Publisher(m["host"], m["port"], m["topic"])
         self.pub.connect()
 
-        self._latest: dict[str, bytes] = {}
-        self._polybags: list[dict] = []      # latest inference result, republished steadily
+        self._latest: dict[str, bytes] = {}   # latest annotated JPEG per camera
+        self._polybags: list[dict] = []       # latest inference result, republished steadily
         self._lock = threading.Lock()
         self._running = False
         self._tick = 0
+        # MJPEG re-send rate for the feeds. The frames themselves are produced by
+        # the inference loop (overlay drawn on the inferred frame), so the feed's
+        # real update rate is the inference rate; this just paces the HTTP stream.
+        self.display_fps = float(pb.get("display_fps", 15))
         # Publish on a fixed cadence, decoupled from the (irregular, inference-
         # bound) frame loop, so the dashboard receives a steady stream and dots
         # never expire in the gap between two slow ticks. Holding the last known
@@ -158,6 +242,11 @@ class Engine:
         self._running = True
         threading.Thread(target=self._loop, daemon=True).start()
         threading.Thread(target=self._publish_loop, daemon=True).start()
+
+    def _clock(self, name: str) -> float:
+        """This camera's position on the shared timeline right now (seconds)."""
+        base = (time.time() - self._t_start) * self.speed
+        return (base + self.sync_offset.get(name, 0.0)) % self.duration
 
     def _publish_loop(self):
         interval = 1.0 / self.publish_hz
@@ -179,12 +268,9 @@ class Engine:
         interval = 1.0 / self.fps
         while self._running:
             t0 = time.time()
-            # Shared timeline position (seconds); each camera adds its fine offset.
-            base = (t0 - self._t_start) * self.speed
             polybags = []
             for name, st in self.streams.items():
-                p = ((base + self.sync_offset.get(name, 0.0)) % self.period) / self.period
-                frame, _idx = st.frame_at(p)
+                frame, _idx = st.frame_at_time(self._clock(name))
                 if frame is None:
                     continue
                 boxes = self.detector.detect(frame)
@@ -200,9 +286,11 @@ class Engine:
                 tagged = st.tracker.update(
                     [(w[0], w[1], b.conf) for b, r, w in keep], t0)
 
-                vis = draw_detections(frame.copy(), [b for b, r, w in keep],
+                # Draw on the SAME frame we inferred -> the overlay always sits
+                # on the bag, even at high speed (no display/inference lag).
+                vis = draw_detections(frame, [b for b, r, w in keep],
                                       color=CAM_COLORS.get(name, (60, 220, 60)),
-                                      ref=self.ref_point)
+                                      ref=self.ref_point, masks=self.draw_masks)
                 for (tid, x, y, c), (b, (rx, ry), w) in zip(tagged, keep):
                     cv2.putText(vis, f"#{tid}", (int(rx) + 6, int(ry) - 6),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -210,8 +298,7 @@ class Engine:
                         "cam": name, "id": int(tid),
                         "x_mm": round(float(x), 1), "y_mm": round(float(y), 1),
                         "conf": round(float(c), 2), "metric": st.cam.metric})
-                ok_enc, buf = cv2.imencode(".jpg", vis,
-                                           [cv2.IMWRITE_JPEG_QUALITY, 80])
+                ok_enc, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok_enc:
                     with self._lock:
                         self._latest[name] = buf.tobytes()
@@ -277,7 +364,7 @@ def create_app(cfg) -> Flask:
                     time.sleep(0.05)
                     continue
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
-                time.sleep(1.0 / 15)
+                time.sleep(1.0 / engine.display_fps)
         if cam not in engine.streams:
             return ("unknown camera", 404)
         return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
@@ -286,7 +373,10 @@ def create_app(cfg) -> Flask:
     def api_config():
         m = cfg["mqtt"]
         return jsonify({
-            "session": cfg["session"],
+            "session": engine.session,
+            "scenario": engine.scenario,
+            "scenario_label": engine.scenario_label,
+            "sync_mode": engine.sync_mode,
             "cameras": [{"name": n, "metric": s.cam.metric}
                         for n, s in engine.streams.items()],
             "georef": engine.georef,
@@ -316,7 +406,20 @@ def create_app(cfg) -> Flask:
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="AMS digital-twin streamer")
+    ap.add_argument("--scenario", help="scenario key from config.yaml (static|single|bulk)")
+    ap.add_argument("--model", help="detector model: seg | detect (or a .pt path)")
+    ap.add_argument("--port", type=int, help="override server port")
+    args = ap.parse_args()
+
     cfg = appconfig.load()
+    if args.scenario:
+        cfg._d["scenario"] = args.scenario
+    if args.model:
+        cfg._d["detector"]["model"] = args.model
+    if args.port:
+        cfg._d["server"]["port"] = args.port
     app = create_app(cfg)
     s = cfg["server"]
     print(f"[streamer] http://{s['host']}:{s['port']}/  (broker {cfg['mqtt']['host']}:{cfg['mqtt']['port']})")

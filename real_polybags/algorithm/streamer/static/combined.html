@@ -52,7 +52,8 @@
 <script>
 (async function () {
   const cfg = await (await fetch("/api/config")).json();
-  document.getElementById("pill-session").textContent = "session " + cfg.session;
+  document.getElementById("pill-session").textContent =
+    (cfg.scenario_label || cfg.scenario || "") + " · " + cfg.session;
   const feeds = document.getElementById("feeds");
   feeds.innerHTML = cfg.cameras.map(c => `
     <div class="feed">

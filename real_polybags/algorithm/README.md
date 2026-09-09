@@ -35,12 +35,21 @@ message shape, not just this video replay.
 # 1. broker — two listeners: 1883 tcp (streamer) + 9001 websockets (browser)
 mosquitto -c algorithm/mosquitto.conf
 
-# 2. streamer — loads YOLO, plays the 4 videos, publishes + serves feeds
-python3 algorithm/streamer/app.py
+# 2. streamer — one scenario at a time (all use port 5002). Runs from any CWD.
+ALGO=/Users/awthura/OVGU/AMS/real_polybags/algorithm
+python3 $ALGO/streamer/app.py --scenario static    # timestamped 4-cam, true sync (static bags)
+python3 $ALGO/streamer/app.py --scenario single    # single polybags, moving
+python3 $ALGO/streamer/app.py --scenario bulk      # bulk polybags, moving
+
+# choose the detector at launch (default: seg):
+python3 $ALGO/streamer/app.py --scenario single --model detect   # yolo11s bboxes
+python3 $ALGO/streamer/app.py --scenario single --model seg      # yolo11n-seg + masks
 
 # 3. open the combined window
 open http://127.0.0.1:5002/
 ```
+
+The three curated sets live under `algorithm/videos/{static,single,bulk}/`.
 
 `http://127.0.0.1:5002/` is the combined window (4 feeds + twin).
 `http://127.0.0.1:5002/dashboard/` is the twin on its own.
@@ -48,13 +57,13 @@ Sanity-check the bus without a browser: `mosquitto_sub -t /polybags -v`.
 
 ## Configuration — `config.yaml`
 
-- `session` — which recording to replay. Default `20260727_140907`, the session
-  where all four calibrated cameras have real footage. (Many recordings in
-  `raw_recordings/` are empty ~8 KB stubs — check the file size first.)
-- `cameras` — must each have a solved `../calibration/results/<cam>.json`.
-- `detector.model_path` — **swap the final trained polybag model here**; nothing
-  else changes. Defaults to the existing `yolo_obb_detector/best.pt` so the
-  pipeline runs today. Handles both axis-aligned and OBB models.
+- `scenario` / `scenarios` — three curated sets under `videos/`: `static`
+  (timestamped 4-cam, TRUE sync, static bags), `single` and `bulk` (both moving,
+  3 cams, normalized/approximate sync). Pick with the `scenario:` field or
+  `--scenario` at launch.
+- `detector.model_path` — **swap the polybag model here**; nothing else changes.
+  Currently the fine-tuned `yolo11seg_finetune` (segmentation; the pipeline uses
+  its boxes). Handles detect, OBB, and segment models.
 - `playback.fps`, `detector.imgsz` — throughput knobs (see Notes).
 - `mqtt` — broker host/ports and the `/polybags` topic.
 

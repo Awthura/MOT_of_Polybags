@@ -51,24 +51,48 @@ class Detector:
             xywh = b.xywh.cpu().numpy()
             confs = b.conf.cpu().numpy()
             clss = b.cls.cpu().numpy()
-            for (cx, cy, w, h), cf, cl in zip(xywh, confs, clss):
+            # Segmentation masks, if this is a segment model — one polygon
+            # (image-pixel points) per detection, aligned with the boxes.
+            mk = getattr(res, "masks", None)
+            masks_xy = mk.xy if (mk is not None and mk.xy is not None) else None
+            for i, ((cx, cy, w, h), cf, cl) in enumerate(zip(xywh, confs, clss)):
+                m = (masks_xy[i] if masks_xy is not None and i < len(masks_xy)
+                     else None)
                 boxes.append(Box(kind="aabb", conf=float(cf), cls=int(cl),
-                                 xywh=(float(cx), float(cy), float(w), float(h))))
+                                 xywh=(float(cx), float(cy), float(w), float(h)),
+                                 mask=m))
         return boxes
 
 
 # ── Overlay drawing for the MJPEG preview ────────────────────────────────────
 
 def draw_detections(frame_bgr: np.ndarray, boxes: list[Box],
-                    color=(60, 220, 60), ref: str = "center") -> np.ndarray:
+                    color=(60, 220, 60), ref: str = "center",
+                    masks: bool = True) -> np.ndarray:
     """Draw boxes + the reference point on a copy of the frame for the feed.
 
     `ref` selects which pixel is marked (and projected downstream): "center"
-    (bbox centre) or "foot" (bbox bottom-centre).
+    (bbox centre) or "foot" (bbox bottom-centre). `masks=False` draws plain
+    bounding boxes even for a segmentation model (lighter, and the overlay reads
+    more clearly on fast-moving bags).
     """
     out = frame_bgr
+    use_masks = masks and any(b.mask is not None for b in boxes)
+    # Segmentation masks (if drawn) get a single translucent fill pass, then
+    # outlines — cheaper and cleaner than blending each polygon separately.
+    if use_masks:
+        overlay = out.copy()
+        for b in boxes:
+            if b.mask is not None and len(b.mask) >= 3:
+                cv2.fillPoly(overlay, [np.asarray(b.mask, np.int32).reshape(-1, 1, 2)],
+                             color)
+        cv2.addWeighted(overlay, 0.35, out, 0.65, 0, out)
+
     for b in boxes:
-        if b.kind == "obb" and b.corners is not None:
+        if use_masks and b.mask is not None and len(b.mask) >= 3:
+            cv2.polylines(out, [np.asarray(b.mask, np.int32).reshape(-1, 1, 2)],
+                          True, color, 2)
+        elif b.kind == "obb" and b.corners is not None:
             pts = np.asarray(b.corners, np.int32).reshape(-1, 1, 2)
             cv2.polylines(out, [pts], True, color, 2)
         elif b.kind == "aabb" and b.xywh is not None:

@@ -59,7 +59,10 @@ def test_transform(cfg) -> bool:
     results_dir = cfg.path("results_dir")
     ok = True
     print("== transform round-trip via the raw-frame inference path ==")
-    for name in cfg["cameras"]:
+    # Every solved camera (a results/<cam>.json), independent of scenario.
+    names = sorted(p.stem for p in results_dir.glob("*.json")
+                   if not p.stem.startswith("_"))
+    for name in names:
         try:
             cam = calib.load_camera(name, results_dir)
         except Exception as e:  # noqa: BLE001

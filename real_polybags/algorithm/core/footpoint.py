@@ -35,6 +35,7 @@ class Box:
     cls: int = 0
     xywh: tuple[float, float, float, float] | None = None
     corners: np.ndarray | None = None
+    mask: np.ndarray | None = None  # (K,2) segmentation polygon in image px, if any
 
     def foot_px(self) -> tuple[float, float]:
         """The (x, y) image pixel where this box meets the belt plane."""

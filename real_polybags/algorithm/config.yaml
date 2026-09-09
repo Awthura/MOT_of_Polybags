@@ -1,17 +1,33 @@
 # algorithm/ — camera -> digital-twin live map, configuration.
 # Paths are resolved relative to the algorithm/ directory (this file's folder).
 
-# Recording session to replay.
-#   20260528_092854 = Single_Polybags_1_moving — bags actually MOVE (motion
-#     ~18/9/8 for basler_1/2/lucid); same session the model was trained on; has
-#     basler_1, basler_2, lucid only (no rgbd_1_color video exists for it).
-#   20260727_140907 = all four calibrated cameras but bags are STATIC (motion ~0.8).
-# Set `paths.video_dir` + `cameras` to match the session you pick.
-session: "20260528_092854"
+# Three curated sets, consolidated under videos/. Pick one here, or override at
+# launch:   python3 streamer/app.py --scenario bulk
+scenario: single
+
+scenarios:
+  # STATIC — timestamped 4-camera recording (per-frame timestamps_*.csv -> TRUE,
+  # fusion-grade sync). Bags don't move, but it's the reference for real sync.
+  static:
+    label: "Static — timestamped 4-cam (true sync)"
+    video_dir: "videos/static"
+    session: "20260731_124825"
+    cameras: [basler_1, basler_2, lucid, rgbd_1_color]
+  # SINGLE — single polybags, moving. 3 cams, no timestamps; started+stopped
+  # together so the normalized timeline aligns them (approximate).
+  single:
+    label: "Single polybags (moving)"
+    video_dir: "videos/single"
+    session: "20260528_092854"
+    cameras: [basler_1, basler_2, lucid]
+  # BULK — multiple polybags, moving. Same 3 cams / approximate sync as single.
+  bulk:
+    label: "Bulk polybags (moving)"
+    video_dir: "videos/bulk"
+    session: "20260528_100631"
+    cameras: [basler_1, basler_2, lucid]
 
 paths:
-  # Moving session lives here; use "../real_data/raw_recordings" for 140907 (static).
-  video_dir: "../experiments/Single_Polybags_1_moving"
   results_dir: "../calibration/results"
   workspace_meta: "../calibration/results/_workspace/meta.json"
   map_png: "../calibration/results/_workspace/map.png"
@@ -28,31 +44,22 @@ display:
   origin_px: [290, 400]
   mm_per_px: 1.0
 
-# Cameras to run, in display order. Each must have a results/<cam>.json with a
-# solved extrinsics.H_image_to_belt. basler_1/2 are metric (intrinsics + pose);
-# lucid / rgbd_1_color are homography-only (distortion uncorrected at edges).
-cameras:
-  # Moving session 092854 has these three. Add rgbd_1_color back (and switch
-  # video_dir/session) for the static 140907 four-camera set.
-  - basler_1
-  - basler_2
-  - lucid
-
-# The two Basler calibrations were solved on swapped frames during recording
-# processing, so each Basler video must be projected with the OTHER's stored
-# calibration. Verified: swapping brings the two cameras into ~10 mm agreement
-# on the same physical bags (vs ~108 mm unswapped). This maps a video (key) to
-# the results/<value>.json it should use; it does NOT modify any calibration file.
-calib_overrides:
-  basler_1: basler_2
-  basler_2: basler_1
-
 detector:
-  # polybag_v1 — YOLO11s detect, trained on the cluster from labels_final_v3
-  # (val P=0.965 R=0.812 mAP50=0.864). Axis-aligned; foot-point uses bbox bottom.
-  # Previous: ../preliminary_results/yolo_obb_detector/best.pt (OBB, noisy).
-  model_path: "../training/yolo_polybag_v1/best.pt"
-  imgsz: 960
+  # Pick the active model here or at launch: --model seg | --model detect
+  #   seg    = yolo11seg_finetune (YOLO11n-seg, class 'polybag_0'; has masks)
+  #   detect = yolo_polybag_v1    (YOLO11s detect, val mAP50=0.864; boxes only)
+  # `model` may also be a direct .pt path if it isn't one of these keys.
+  model: seg
+  models:
+    seg:    "../training/yolo11seg_finetune/weights/best.pt"
+    detect: "../training/yolo_polybag_v1/best.pt"
+  # imgsz trades accuracy for speed (this Mac/MPS: 960~112ms, 640~52ms, 512~35ms).
+  # The overlay is drawn on the inferred frame (no lag), so imgsz sets the feed's
+  # frame rate: 512 ~= 10 fps across 3 cams. Raise for accuracy, lower for fps.
+  imgsz: 512
+  # draw_masks:false = plain bounding boxes instead of segmentation polygons —
+  # lighter and reads more clearly on fast-moving bags.
+  draw_masks: true
   conf: 0.25
   iou: 0.5
   device: ""          # "" = auto (mps on this Mac), or "cpu"
@@ -60,6 +67,7 @@ detector:
 
 playback:
   fps: 5              # max inference-loop tick rate (inference is usually the limit)
+  display_fps: 15     # feed refresh rate — decoupled from inference, so feeds are smooth
   loop: true
   # Cameras recorded the same event at different real rates and frame counts, so
   # they are played on a shared normalized timeline (in sync). event_fps ~ the
