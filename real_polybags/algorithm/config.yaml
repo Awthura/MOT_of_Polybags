@@ -90,23 +90,26 @@ belt_bounds:
 
 # Fusion layer — merge overlapping-camera detections into one global object and
 # re-ID bags across the unseen gap between the upstream (basler) and downstream
-# (lucid) camera sets, using the across-belt X as the invariant (belt moves +Y).
+# (lucid) camera sets. The belt is a one-directional FIFO conveyor (bags can't
+# pass each other), so re-ID is by DEPARTURE ORDER, not by lucid's unreliable
+# world-X — a belt-speed transit-time gate guards the queue.
 # Published to mqtt.fused_topic alongside the raw per-camera stream.
 fusion:
   enabled: true
   dedup_gate_mm: 130      # detections within this (across cameras) = same bag
   assoc_gate_mm: 300      # match a detection to an existing global track (lucid ~6fps, bags
                           # jump between frames — a generous gate reduces track splits)
-  # re-ID across the gap uses along-belt ORDER (FIFO), not absolute X (lucid is
-  # homography-only, so its X disagrees with the baslers'). Bags that departed
-  # within this window count as one "row"; X only orders bags within a row.
-  fifo_window_s: 2.5
   set2_entry_y_mm: 900    # y>=this = in lucid; below = upstream. Any confirmed upstream
-                          # track that vanishes is treated as flowed-downstream (re-ID candidate).
+                          # track that vanishes is queued as flowed-downstream (re-ID candidate).
   min_hits: 2             # a track must be seen >= this many times to count (anti false-positive)
-  active_ttl_s: 1.2       # retire (and, if upstream, mark departed) soon after a track
+  active_ttl_s: 1.2       # retire (and, if upstream, enqueue as departed) soon after a track
                           # vanishes — so its re-ID entry is ready before it reaches lucid
   departed_ttl_s: 90.0    # keep a departed bag re-ID-able this long (gap transit)
+  # belt-speed transit-time gate for the FIFO queue
+  default_belt_speed_mm_s: 0.0   # fallback belt speed until motion is measured live
+                                 # (0 = unknown -> pure FIFO order, no time gate)
+  transit_tol: 0.5        # accept an arrival within +-this fraction of the expected transit time
+  transit_slack_s: 2.0    # extra late-side slack before the head bag is judged overdue
 
 mqtt:
   host: "127.0.0.1"   # IPv4 loopback (avoids macOS localhost->::1 ambiguity)

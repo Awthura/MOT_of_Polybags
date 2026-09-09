@@ -229,8 +229,9 @@ class Engine:
         self.fusion_enabled = bool(fz.get("enabled", True))
         self.fused_topic = m.get("fused_topic", m["topic"] + "_fused")
         self.fusion = FusionTracker(**{k: fz[k] for k in (
-            "dedup_gate_mm", "assoc_gate_mm", "fifo_window_s", "set2_entry_y_mm",
-            "min_hits", "active_ttl_s", "departed_ttl_s") if k in fz})
+            "dedup_gate_mm", "assoc_gate_mm", "set2_entry_y_mm", "min_hits",
+            "active_ttl_s", "departed_ttl_s", "default_belt_speed_mm_s",
+            "transit_tol", "transit_slack_s") if k in fz})
 
         self._latest: dict[str, bytes] = {}   # latest annotated JPEG per camera
         self._polybags: list[dict] = []       # latest RAW per-camera detections
