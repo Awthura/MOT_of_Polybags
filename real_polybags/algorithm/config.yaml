@@ -49,7 +49,7 @@ detector:
   #   seg    = yolo11seg_finetune (YOLO11n-seg, class 'polybag_0'; has masks)
   #   detect = yolo_polybag_v1    (YOLO11s detect, val mAP50=0.864; boxes only)
   # `model` may also be a direct .pt path if it isn't one of these keys.
-  model: seg
+  model: detect          # detect = higher recall (best for fusion); seg for masks
   models:
     seg:    "../training/yolo11seg_finetune/weights/best.pt"
     detect: "../training/yolo_polybag_v1/best.pt"
@@ -88,11 +88,32 @@ belt_bounds:
   x_mm: [-290, 290]
   y_mm: [-400, 1600]
 
+# Fusion layer — merge overlapping-camera detections into one global object and
+# re-ID bags across the unseen gap between the upstream (basler) and downstream
+# (lucid) camera sets, using the across-belt X as the invariant (belt moves +Y).
+# Published to mqtt.fused_topic alongside the raw per-camera stream.
+fusion:
+  enabled: true
+  dedup_gate_mm: 130      # detections within this (across cameras) = same bag
+  assoc_gate_mm: 300      # match a detection to an existing global track (lucid ~6fps, bags
+                          # jump between frames — a generous gate reduces track splits)
+  # re-ID across the gap uses along-belt ORDER (FIFO), not absolute X (lucid is
+  # homography-only, so its X disagrees with the baslers'). Bags that departed
+  # within this window count as one "row"; X only orders bags within a row.
+  fifo_window_s: 2.5
+  set2_entry_y_mm: 900    # y>=this = in lucid; below = upstream. Any confirmed upstream
+                          # track that vanishes is treated as flowed-downstream (re-ID candidate).
+  min_hits: 2             # a track must be seen >= this many times to count (anti false-positive)
+  active_ttl_s: 1.2       # retire (and, if upstream, mark departed) soon after a track
+                          # vanishes — so its re-ID entry is ready before it reaches lucid
+  departed_ttl_s: 90.0    # keep a departed bag re-ID-able this long (gap transit)
+
 mqtt:
   host: "127.0.0.1"   # IPv4 loopback (avoids macOS localhost->::1 ambiguity)
   port: 1883          # tcp — the streamer publishes here
   ws_port: 9001       # websockets — the browser dashboard subscribes here
-  topic: "/polybags"
+  topic: "/polybags"           # raw per-camera detections
+  fused_topic: "/polybags_fused"   # fused global objects (dedup + re-ID)
   publish_hz: 6       # steady publish cadence, decoupled from inference (anti-flicker)
   track_ttl_s: 1.5    # dashboard drops a track not seen for this long (> a few slow ticks)
 

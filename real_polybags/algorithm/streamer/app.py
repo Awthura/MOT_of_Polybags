@@ -35,6 +35,7 @@ import appconfig            # noqa: E402
 import calib                # noqa: E402
 import georef               # noqa: E402
 from detector import Detector, draw_detections   # noqa: E402
+from fusion import FusionTracker                  # noqa: E402
 from publisher import Publisher                   # noqa: E402
 from track import Tracker                         # noqa: E402
 
@@ -223,8 +224,17 @@ class Engine:
         self.pub = Publisher(m["host"], m["port"], m["topic"])
         self.pub.connect()
 
+        # Fusion layer: dedup overlapping cameras + global re-ID across the gap.
+        fz = cfg.get("fusion") or {}
+        self.fusion_enabled = bool(fz.get("enabled", True))
+        self.fused_topic = m.get("fused_topic", m["topic"] + "_fused")
+        self.fusion = FusionTracker(**{k: fz[k] for k in (
+            "dedup_gate_mm", "assoc_gate_mm", "fifo_window_s", "set2_entry_y_mm",
+            "min_hits", "active_ttl_s", "departed_ttl_s") if k in fz})
+
         self._latest: dict[str, bytes] = {}   # latest annotated JPEG per camera
-        self._polybags: list[dict] = []       # latest inference result, republished steadily
+        self._polybags: list[dict] = []       # latest RAW per-camera detections
+        self._fused: list[dict] = []          # latest FUSED objects (global IDs)
         self._lock = threading.Lock()
         self._running = False
         self._tick = 0
@@ -253,8 +263,14 @@ class Engine:
         while self._running:
             with self._lock:
                 polybags = list(self._polybags)
-            self.pub.publish({"t": int(time.time() * 1000), "frame": self._tick,
+                fused = list(self._fused)
+            t_ms = int(time.time() * 1000)
+            self.pub.publish({"t": t_ms, "frame": self._tick,
                               "session": self.session, "polybags": polybags})
+            if self.fusion_enabled:
+                self.pub.publish({"t": t_ms, "frame": self._tick,
+                                  "session": self.session, "polybags": fused},
+                                 topic=self.fused_topic)
             time.sleep(interval)
 
     def stop(self):
@@ -303,10 +319,13 @@ class Engine:
                     with self._lock:
                         self._latest[name] = buf.tobytes()
 
-            # Hand this tick's positions to the steady publisher; do not publish
-            # here (that would inherit this loop's irregular timing).
+            # Fuse this tick's raw detections into global objects (dedup + re-ID).
+            fused = self.fusion.update(polybags, t0) if self.fusion_enabled else []
+            # Hand both to the steady publisher; do not publish here (that would
+            # inherit this loop's irregular timing).
             with self._lock:
                 self._polybags = polybags
+                self._fused = fused
             self._tick += 1
             dt = time.time() - t0
             if dt < interval:
@@ -382,6 +401,8 @@ def create_app(cfg) -> Flask:
             "georef": engine.georef,
             "map_url": "/assets/map.png",
             "mqtt": {"ws_port": m["ws_port"], "topic": m["topic"],
+                     "fused_topic": engine.fused_topic,
+                     "fusion_enabled": engine.fusion_enabled,
                      "track_ttl_s": m["track_ttl_s"], "host": m["host"]},
         })
 

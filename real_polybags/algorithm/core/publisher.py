@@ -30,8 +30,8 @@ class Publisher:
         self._c.connect_async(self._host, self._port, keepalive=30)
         self._c.loop_start()
 
-    def publish(self, payload: dict) -> None:
-        self._c.publish(self.topic, json.dumps(payload), qos=0)
+    def publish(self, payload: dict, topic: str | None = None) -> None:
+        self._c.publish(topic or self.topic, json.dumps(payload), qos=0)
 
     def close(self) -> None:
         self._c.loop_stop()
