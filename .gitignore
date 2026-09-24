@@ -41,6 +41,8 @@ real_polybags/calibration/results/_workspace/
 
 # PDF (generated from .md sources)
 *.pdf
+# ...except the final report, deliberately committed at the repo root.
+!MOT_of_Polybags.pdf
 
 # LaTeX / build artefacts (generated from .tex/.md sources, never source)
 *.aux
