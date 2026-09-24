@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OVGU AMS — Extrinsics (rig session)</title>
+<link rel="stylesheet" href="ams.css">
+</head>
+<body>
+
+<header>
+  <div class="mark">AMS</div>
+  <div>
+    <h1>Extrinsics — rig session</h1>
+    <div style="font-size:12px;opacity:.85">OVGU · Chair of Automation / Manufacturing Systems</div>
+  </div>
+  <nav class="nav">
+    <a href="/">Intrinsics</a>
+    <a href="/extrinsics" class="on">Extrinsics</a>
+  </nav>
+  <div class="sub" id="hdr-status">no session</div>
+</header>
+
+<main>
+
+  <!-- A · Status board -->
+  <section class="panel">
+    <h2><span class="step">A</span> Status — what is still outstanding</h2>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div id="plan-headline" class="headline">loading…</div>
+      <div class="row" style="gap:8px">
+        <button id="btn-refresh" class="ghost">Refresh</button>
+        <button id="btn-save-plan" class="accent">Save plan</button>
+      </div>
+    </div>
+
+    <div class="tablewrap" style="margin-top:12px">
+      <table class="roster" id="roster">
+        <thead>
+          <tr>
+            <th>Camera</th>
+            <th>State</th>
+            <th>Intrinsics</th>
+            <th>Solved pose</th>
+            <th class="anticipated">Expected height (mm)</th>
+            <th class="anticipated">Planned offset X, Y (mm)</th>
+            <th class="anticipated">Measured</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="roster-body"></tbody>
+      </table>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div class="field">
+        <label for="new-cam">Add a camera to the plan</label>
+        <input id="new-cam" size="18" placeholder="e.g. rgbd_2_color">
+      </div>
+      <button id="btn-add-cam" class="ghost">Add</button>
+    </div>
+
+    <p class="note">
+      The shaded columns are the <strong>anticipated</strong> measurements: what
+      you expect to find, recorded before the solve so the solve can be checked
+      against something. An expected height is the cheapest guard there is
+      against the failure that otherwise goes unnoticed — a board printed at
+      "fit to page", which makes every distance wrong by the scale factor while
+      leaving the reprojection error looking perfectly healthy.
+    </p>
+    <p class="note">
+      Camera names must match the names the recorder writes its streams under
+      (<code>basler_1</code>, <code>rgbd_2_color</code>, …). A calibration saved
+      under a name nothing else uses is invisible downstream, and nothing will
+      report that — it simply never matches.
+    </p>
+  </section>
+
+  <!-- B · Session parameters -->
+  <section class="panel">
+    <h2><span class="step">B</span> Session parameters</h2>
+    <div class="row">
+      <div class="field">
+        <label>Origin method</label>
+        <div class="row" style="gap:14px;padding-top:6px">
+          <label class="radio"><input type="radio" name="method" value="A" checked>
+            <span>A — one board placement, every camera</span></label>
+          <label class="radio"><input type="radio" name="method" value="B">
+            <span>B — measured offsets per camera</span></label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="belt-w">Belt width (mm)</label>
+        <input id="belt-w" type="number" step="10" size="8">
+      </div>
+      <div class="field">
+        <label for="belt-l">Belt length (mm)</label>
+        <input id="belt-l" type="number" step="10" size="8">
+      </div>
+    </div>
+    <p class="note" id="method-note"></p>
+  </section>
+
+  <!-- B2 · Workspace map -->
+  <section class="panel">
+    <h2><span class="step">B2</span> Workspace map <span class="pill idle">optional</span></h2>
+    <p class="note" style="margin-top:0">
+      The world plane does not have to be a conveyor. Upload a top-down map of
+      whatever plane this rig watches — a floor plan, a CAD export, a stitched
+      photo (<code>.png</code>/<code>.jpg</code>) or a <code>.glb</code> model —
+      and camera footprints, coverage and overlap render against it instead of a
+      blank rectangle. Without one, the belt width and length above are used, so
+      this is purely additive.
+    </p>
+
+    <div class="row">
+      <input type="file" id="ws-file" accept=".png,.jpg,.jpeg,.glb"
+             style="max-width:320px">
+      <button id="btn-ws-upload" class="accent">Upload map</button>
+      <button id="btn-ws-clear" class="danger">Remove map</button>
+    </div>
+    <div id="ws-state" class="banner hidden"></div>
+
+    <div class="split hidden" id="ws-body" style="margin-top:12px">
+      <div>
+        <div id="ws-viewport" style="position:relative;background:#111;
+             border-radius:var(--radius);overflow:auto;max-height:520px">
+          <img id="ws-img" style="display:block;max-width:100%;cursor:crosshair"
+               alt="workspace map">
+          <div id="ws-marker-origin" class="ws-marker hidden"></div>
+          <div id="ws-marker-a" class="ws-marker alt hidden"></div>
+          <div id="ws-marker-b" class="ws-marker alt hidden"></div>
+        </div>
+        <p class="note" id="ws-click-hint">Upload a map to begin.</p>
+      </div>
+
+      <div>
+        <strong class="caps">Georeference</strong>
+        <p class="note" style="margin-top:6px">
+          An image carries no units. Two things make it a map: where world
+          <strong>(0, 0)</strong> sits, and what a pixel is worth in
+          millimetres. A <code>.glb</code> supplies both from the model itself
+          (glTF fixes metres and the model origin) and skips this entirely.
+        </p>
+
+        <div class="row" style="margin-top:8px">
+          <button id="btn-ws-pick-origin" class="ghost small">1 · Click the origin</button>
+        </div>
+        <div class="stat"><span class="k">origin</span>
+          <span class="v" id="ws-origin-val">—</span></div>
+
+        <div class="row" style="margin-top:12px">
+          <button id="btn-ws-pick-scale" class="ghost small">2 · Click two known points</button>
+          <div class="field">
+            <label for="ws-dist">distance between them (mm)</label>
+            <input id="ws-dist" type="number" step="1" size="9" placeholder="e.g. 3500">
+          </div>
+          <button id="btn-ws-apply-scale" class="ghost small">Apply</button>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="ws-mmpp">…or type mm per pixel directly</label>
+            <input id="ws-mmpp" type="number" step="0.01" size="9">
+          </div>
+          <button id="btn-ws-apply-mmpp" class="ghost small">Set</button>
+        </div>
+        <div class="stat"><span class="k">scale</span>
+          <span class="v" id="ws-scale-val">—</span></div>
+
+        <div class="row" style="margin-top:12px">
+          <button id="btn-ws-pick-axis" class="ghost small">3 · Click a point along +Y <span class="pill idle">optional</span></button>
+        </div>
+        <p class="note">
+          World +X runs right and +Y runs down the map. If the plane's natural
+          axis (belt travel, aisle direction) is not aligned that way, click a
+          point along it — the rotation is baked into the stored image once,
+          rather than carried as a term through every later transform.
+        </p>
+
+        <div id="ws-status" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- B3 · Map correspondences -->
+  <section class="panel">
+    <h2><span class="step">B3</span> Solve from map points
+      <span class="pill idle">board-free</span></h2>
+    <p class="note" style="margin-top:0">
+      The alternative to laying a board on the plane: freeze <strong>one frame
+      per camera</strong>, click points you can identify in both the frame and
+      the map above, and solve the image&rarr;world mapping directly. Needs no
+      rig visit and works on footage already recorded. Requires a georeferenced
+      map (B2).
+    </p>
+
+    <div class="row">
+      <div class="field">
+        <label for="corr-camera">Camera</label>
+        <select id="corr-camera"></select>
+      </div>
+      <button id="btn-corr-grab">Freeze current frame</button>
+      <button id="btn-corr-solve" class="accent">Solve</button>
+      <button id="btn-corr-save" class="accent" disabled>Save as extrinsics</button>
+      <button id="btn-corr-undo" class="ghost">Undo last pair</button>
+      <button id="btn-corr-clear" class="ghost">Clear pairs</button>
+    </div>
+    <div id="corr-state" class="banner hidden"></div>
+
+    <div class="split hidden" id="corr-body" style="margin-top:12px">
+      <div>
+        <strong class="caps">Camera frame — click a feature</strong>
+        <div id="corr-viewport" style="position:relative;background:#111;
+             border-radius:var(--radius);overflow:auto;max-height:460px;margin-top:6px">
+          <img id="corr-img" style="display:block;max-width:100%;cursor:crosshair"
+               alt="frozen camera frame">
+        </div>
+        <p class="note" id="corr-hint">
+          Freeze a frame to begin. Then click a feature here, and the same
+          feature on the map — that is one pair.
+        </p>
+      </div>
+      <div>
+        <strong class="caps">Pairs</strong>
+        <div class="tablewrap" style="margin-top:6px;max-height:280px;overflow-y:auto">
+          <table class="roster" id="corr-table">
+            <thead><tr><th>#</th><th>image px</th><th>world mm</th>
+              <th>error</th><th></th></tr></thead>
+            <tbody id="corr-rows"></tbody>
+          </table>
+        </div>
+        <p class="note">
+          Four pairs is the minimum, but four fit exactly and prove nothing —
+          a fifth is what first gives a real error estimate. Spread them across
+          the area you care about: points clustered in one corner give a fit
+          that is excellent there and arbitrarily wrong elsewhere.
+        </p>
+        <div id="corr-result"></div>
+        <div class="row hidden" id="corr-validate-row" style="margin-top:10px">
+          <button id="btn-corr-validate" class="ghost small">Validate: click the frame</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- C · Solve -->
+  <section class="panel">
+    <h2><span class="step">C</span> Solve a camera's belt pose</h2>
+    <div class="row">
+      <div class="field">
+        <label for="camera">Camera</label>
+        <select id="camera"></select>
+      </div>
+      <div class="field">
+        <label for="source">Frame source</label>
+        <select id="source"></select>
+      </div>
+      <div class="field" id="folder-field" style="display:none">
+        <label for="folder">Image folder</label>
+        <input id="folder" size="30" placeholder="/path/to/captures">
+      </div>
+      <div class="field" id="device-field" style="display:none">
+        <label for="device">Device serial</label>
+        <input id="device" list="device-list" size="18" placeholder="serial">
+        <datalist id="device-list"></datalist>
+      </div>
+      <div class="field">
+        <label for="board">Board on the belt</label>
+        <select id="board"></select>
+      </div>
+      <button id="btn-start" class="accent">Start session</button>
+    </div>
+    <div class="note" id="source-note"></div>
+    <div class="note" id="device-note"></div>
+    <div id="device-banner" class="banner hidden"></div>
+    <div id="intr-state" class="banner hidden"></div>
+
+    <div class="split hidden" id="solve-body" style="margin-top:14px">
+      <div>
+        <div id="viewport">
+          <img id="stream" alt="camera preview">
+          <div id="marker"></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div class="field">
+            <label for="ox">Origin offset X (mm)</label>
+            <input id="ox" type="number" value="0" step="1" size="8">
+          </div>
+          <div class="field">
+            <label for="oy">Origin offset Y (mm)</label>
+            <input id="oy" type="number" value="0" step="1" size="8">
+          </div>
+          <button id="btn-extr">Solve extrinsics</button>
+        </div>
+        <p class="note" id="offset-hint"></p>
+      </div>
+
+      <div>
+        <strong class="caps">Measured vs anticipated</strong>
+        <div id="checks" style="margin-top:8px">
+          <p class="note">Nothing solved yet in this session.</p>
+        </div>
+        <div id="extr-out" style="margin-top:10px"></div>
+        <p class="note hidden" id="click-hint"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- D · Save -->
+  <section class="panel hidden" id="sec-save">
+    <h2><span class="step">D</span> Save</h2>
+    <div class="row">
+      <div class="field" style="flex:1;min-width:280px">
+        <label for="notes">Notes (mounting, board placement — anything needed to reproduce this)</label>
+        <input id="notes" placeholder="e.g. board at upstream end, belt stopped, mount unchanged since 29 Jul">
+      </div>
+      <button id="btn-save" class="accent">Save calibration</button>
+    </div>
+    <p class="note">
+      Saving writes <code>results/&lt;camera&gt;.json</code> with the reloaded
+      intrinsics and this pose together. Then start the next camera —
+      under Method A, without touching the board.
+    </p>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+<script src="common.js"></script>
+<script src="extrinsics.js"></script>
+</body>
+</html>

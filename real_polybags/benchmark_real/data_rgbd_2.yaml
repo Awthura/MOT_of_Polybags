@@ -1,0 +1,5 @@
+path: /Users/awthura/OVGU/AMS/real_polybags/benchmark_real/rgbd_2
+train: images
+val: images
+nc: 1
+names: ['polybag']

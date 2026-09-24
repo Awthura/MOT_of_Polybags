@@ -1,0 +1,150 @@
+# algorithm/ — camera -> digital-twin live map, configuration.
+# Paths are resolved relative to the algorithm/ directory (this file's folder).
+
+# Three curated sets, consolidated under videos/. Pick one here, or override at
+# launch:   python3 streamer/app.py --scenario bulk
+scenario: single
+
+scenarios:
+  # STATIC — timestamped 4-camera recording (per-frame timestamps_*.csv -> TRUE,
+  # fusion-grade sync). Bags don't move, but it's the reference for real sync.
+  static:
+    label: "Static — timestamped 4-cam (true sync)"
+    video_dir: "videos/static"
+    session: "20260731_124825"
+    cameras: [basler_1, basler_2, lucid, rgbd_1_color]
+  # SINGLE — single polybags, moving. 3 cams, no timestamps; started+stopped
+  # together so the normalized timeline aligns them (approximate).
+  single:
+    label: "Single polybags (moving)"
+    video_dir: "videos/single"
+    session: "20260528_092854"
+    cameras: [basler_1, basler_2, lucid]
+  # BULK — multiple polybags, moving. Same 3 cams / approximate sync as single.
+  bulk:
+    label: "Bulk polybags (moving)"
+    video_dir: "videos/bulk"
+    session: "20260528_100631"
+    cameras: [basler_1, basler_2, lucid]
+  # VALIDATION — supervisor's hand-annotated single-polybag set (session
+  # 20260602, 5 fps, 4 calibrated cams). Used to benchmark the pipeline against
+  # human ground truth (~50 bags/camera). No timestamps -> normalized sync.
+  validation:
+    label: "Validation (supervisor annotated, single moving)"
+    video_dir: "videos/validation"
+    session: "20260602"
+    cameras: [basler_1, basler_2, lucid, rgbd_1_color]
+
+paths:
+  results_dir: "../calibration/results"
+  workspace_meta: "../calibration/results/_workspace/meta.json"
+  map_png: "../calibration/results/_workspace/map.png"
+
+# The map the dashboard draws polybags on. The clean synthetic belt
+# (conveyor_dashboard.png, 580x2000 mm @ 1 mm/px, no scan clutter) reads far
+# better than the raw scan render. Its georef is by construction: world origin
+# at pixel (W/2, origin_offset) = (290, 400), +X across (image right),
+# +Y along the belt (image down) — the same frame the homography outputs.
+# Set display.map to "workspace" to fall back to the scan map + its meta.json.
+display:
+  map: "dashboard"                                             # "dashboard" | "workspace"
+  map_png: "../calibration/datasets/dashboard/conveyor_dashboard.png"
+  origin_px: [290, 400]
+  mm_per_px: 1.0
+
+detector:
+  # Pick the active model here or at launch: --model seg | --model detect
+  #   seg    = yolo11seg_finetune (YOLO11n-seg, class 'polybag_0'; has masks)
+  #   detect = yolo_polybag_v1    (YOLO11s detect, val mAP50=0.864; boxes only)
+  # `model` may also be a direct .pt path if it isn't one of these keys.
+  model: detect          # detect = higher recall (best for fusion); seg for masks
+  models:
+    seg:    "../training/yolo11seg_finetune/weights/best.pt"
+    detect: "../training/yolo_polybag_v1/best.pt"
+  # imgsz trades accuracy for speed (this Mac/MPS: 960~112ms, 640~52ms, 512~35ms).
+  # The overlay is drawn on the inferred frame (no lag), so imgsz sets the feed's
+  # frame rate: 512 ~= 10 fps across 3 cams. Raise for accuracy, lower for fps.
+  imgsz: 512
+  # draw_masks:false = plain bounding boxes instead of segmentation polygons —
+  # lighter and reads more clearly on fast-moving bags.
+  draw_masks: true
+  conf: 0.25
+  iou: 0.5
+  device: ""          # "" = auto (mps on this Mac), or "cpu"
+  reference_point: "center"   # "center" (bbox centre) | "foot" (bbox bottom-centre)
+
+playback:
+  fps: 5              # max inference-loop tick rate (inference is usually the limit)
+  display_fps: 15     # feed refresh rate — decoupled from inference, so feeds are smooth
+  loop: true
+  # Cameras recorded the same event at different real rates and frame counts, so
+  # they are played on a shared normalized timeline (in sync). event_fps ~ the
+  # fastest camera's real capture rate; period = longest_video_frames/event_fps
+  # gives roughly real-time. speed<1 = slow motion (more inference samples per bag).
+  event_fps: 15
+  speed: 1.0
+  # Per-camera fine start-offset in seconds (added to its shared-timeline
+  # position) for any residual skew the frame-count normalization can't remove.
+  # 0 = none. A scan hinted basler_2 may lead by ~1s but it was too noisy to set.
+  sync_offset: {}     # e.g. { basler_2: 1.0 }
+
+# Conveyor boundaries in world mm. A detection whose projected point falls
+# outside this rectangle is dropped (not tracked, not published, not drawn) —
+# it is off the belt, almost always a false positive. Matches the clean belt
+# map extent: across X in [-290,290] (580 mm wide), along Y in [-400,1600].
+belt_bounds:
+  x_mm: [-290, 290]
+  y_mm: [-400, 1600]
+
+# Fusion layer — merge overlapping-camera detections into one global object and
+# track each with a unique local ID. Cross-gap RE-ID IS DEFERRED (reid_enabled:
+# false): carrying an ID across the blind basler->lucid gap needs a real re-ID
+# method and is out of scope for now. The line counter (below) does not need it.
+# Published to mqtt.fused_topic alongside the raw per-camera stream.
+fusion:
+  enabled: true
+  reid_enabled: false     # carry IDs across the blind gap (deferred; keeps the code below dormant)
+  dedup_gate_mm: 130      # detections within this (across cameras) = same bag
+  assoc_gate_mm: 300      # match a detection to an existing global track (slow cams, bags
+                          # jump between frames — a generous gate reduces track splits)
+  active_ttl_s: 1.2       # retire a track this long after it was last observed
+  # --- deferred re-ID knobs (only used when reid_enabled: true) ---
+  set2_entry_y_mm: 900    # y>=this = in lucid; below = upstream
+  min_hits: 2             # a track must be seen >= this many times to depart
+  departed_ttl_s: 90.0    # keep a departed bag re-ID-able this long (gap transit)
+  default_belt_speed_mm_s: 0.0   # fallback belt speed until motion is measured live
+  transit_tol: 0.5        # accept an arrival within +-this fraction of the expected transit time
+  transit_slack_s: 2.0    # extra late-side slack before the head bag is judged overdue
+
+# Counting lines on the belt (world mm). Two lines (rig geometry, not tuned):
+#   - "exit"  y=1200 in the lucid region, the downstream belt EXIT. Every bag
+#             that leaves crosses it. Single-camera (lucid) there.
+#   - "entry" y=0 upstream, inside the basler_1 x basler_2 overlap ([-196,74]),
+#             so both baslers see it (also the fusion dedup check).
+# The primary reported number is the FLUX estimate at each line (see count_flux).
+count_lines:
+  - {name: exit,  y_mm: 1200, x_mm: [-290, 290]}   # downstream (lucid) belt exit
+  - {name: entry, y_mm: 0,    x_mm: [-290, 290]}   # upstream, in the basler_1 x basler_2 overlap
+
+# Counting method. The scene is DENSE and fast (up to 12 to 21 bags per frame,
+# ~88 mm of travel per 5 Hz tick vs ~105 mm bag spacing), so crossing-per-track
+# counting collapses (it reports ~11 when there are ~46). The primary count is
+# therefore FLUX: integrate detection occupancy in a band around each line and
+# divide by the dwell time (band / belt_speed) - a throughput estimate that needs
+# no per-bag tracking. Belt speed is measured live (belt_speed_mm_s: 0).
+count_flux:
+  band_mm: 200            # band thickness centred on each counting line
+  belt_speed_mm_s: 0      # 0 = estimate live from motion; else a fixed fallback
+
+mqtt:
+  host: "127.0.0.1"   # IPv4 loopback (avoids macOS localhost->::1 ambiguity)
+  port: 1883          # tcp — the streamer publishes here
+  ws_port: 9001       # websockets — the browser dashboard subscribes here
+  topic: "/polybags"           # raw per-camera detections
+  fused_topic: "/polybags_fused"   # fused global objects (dedup + re-ID)
+  publish_hz: 6       # steady publish cadence, decoupled from inference (anti-flicker)
+  track_ttl_s: 1.5    # dashboard drops a track not seen for this long (> a few slow ticks)
+
+server:
+  host: "127.0.0.1"
+  port: 5002

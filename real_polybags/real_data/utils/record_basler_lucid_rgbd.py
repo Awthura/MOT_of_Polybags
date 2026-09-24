@@ -99,7 +99,13 @@ class CameraWorker:
         self.error        = None
         self.start_time   = None
         self.end_time     = None   # set on capture-loop exit; freezes elapsed()
-        self.frame_times  = []     # wall-clock capture time per written frame
+        self.frame_times  = []     # host wall-clock time per written frame
+        self.device_times = []     # camera's own timestamp per frame (may be None)
+        # Unit/epoch of device_times, set by each worker once known. Recorded
+        # verbatim rather than normalised: pylon reports model-dependent device
+        # ticks, Arena reports nanoseconds, librealsense reports milliseconds in
+        # one of several domains. Downstream is told the domain and converts.
+        self.ts_domain    = None
         # Setup and the synchronized start are decoupled: each worker reports
         # setup_done (success or failure) independently, then waits on a shared
         # go_event. This replaces a threading.Barrier(len(workers)), which
@@ -159,16 +165,22 @@ class CameraWorker:
         if not self.out.isOpened():
             raise RuntimeError(f"Could not open VideoWriter: {self.output_file}")
 
-    def _write_frame(self, frame):
+    def _write_frame(self, frame, device_ts=None):
+        """Write a frame and record when it was captured.
+
+        Two clocks per frame, because neither alone suffices. The host clock
+        (time.time()) is sampled here — AFTER transfer and conversion — so it
+        carries per-camera, per-frame latency, but it IS shared across cameras
+        since one host records them all. `device_ts` is the camera's own
+        timestamp: precise, but on that camera's private clock.
+
+        Pairing them is what makes ~10-30ms cross-camera alignment possible
+        without PTP. Both go to timestamps_<camera>_<run>.csv.
+        """
         if frame is not None and frame.size > 0:
             self.out.write(frame)
-            # Capture-time timestamp per frame. The AVI header carries a single
-            # fixed fps (the *target*), so a camera running below target yields
-            # a file that plays back too fast — measured on macOS, Lucid wrote
-            # 85 frames of a 10s event, which at a 15fps header replays in 5.7s
-            # (1.76x). Frame index is therefore NOT proportional to time, which
-            # matters for velocity, cross-camera alignment and MOT.
             self.frame_times.append(time.time())
+            self.device_times.append(device_ts)
             self.frame_count += 1
             with self.lock:
                 self.latest_frame = frame.copy()
@@ -297,15 +309,32 @@ class RGBDWorker(CameraWorker):
         serial = devs[self.index % len(devs)].get_info(rs.camera_info.serial_number)
         cfg.enable_device(serial)
 
+        # NOTE: pyrealsense2's enable_stream() requires an int framerate.
+        # self.fps is a Python float (argparse --fps defaults to type=float),
+        # and pybind11 does not silently truncate float->int here — passing
+        # 15.0 raises "incompatible function arguments" because it doesn't
+        # match any overload. Cast explicitly.
+        fps_int = int(round(self.fps))
         cfg.enable_stream(rs.stream.color, self.width, self.height,
-                          rs.format.bgr8, self.fps)
+                          rs.format.bgr8, fps_int)
         cfg.enable_stream(rs.stream.depth, self.depth_width, self.depth_height,
-                          rs.format.z16,  self.fps)
+                          rs.format.z16,  fps_int)
 
         align    = rs.align(rs.stream.color)
         profile  = pipeline.start(cfg)
         dev_name = profile.get_device().get_info(rs.camera_info.name)
         print(f"[{self.name}] RealSense connected: {dev_name} (S/N: {serial})")
+
+        # Ask librealsense to report frame timestamps already mapped onto the
+        # host clock (GLOBAL_TIME domain). Without it timestamps arrive on
+        # HARDWARE_CLOCK, an arbitrary device epoch comparable to nothing.
+        try:
+            for _s in profile.get_device().query_sensors():
+                if _s.supports(rs.option.global_time_enabled):
+                    _s.set_option(rs.option.global_time_enabled, 1)
+            print(f"[{self.name}] global_time enabled (device clock mapped to host)")
+        except Exception as e:
+            print(f"[{self.name}] could not enable global_time: {e}")
 
         # Warm-up frames — discard before barrier
         for _ in range(30):
@@ -335,10 +364,17 @@ class RGBDWorker(CameraWorker):
                     self.incomplete += 1
                     continue
 
+                try:
+                    dev_ts = color_frame.get_timestamp()   # ms
+                    if self.ts_domain is None:
+                        self.ts_domain = str(color_frame.get_frame_timestamp_domain())
+                except Exception:
+                    dev_ts = None
+
                 color = np.asanyarray(color_frame.get_data())
                 depth = np.asanyarray(depth_frame.get_data())   # uint16, mm
 
-                self._write_frame(color)
+                self._write_frame(color, device_ts=dev_ts)
                 self._write_depth(depth)
         finally:
             pipeline.stop()
@@ -544,11 +580,20 @@ class BaslerWorker(CameraWorker):
                     grab.Release()
                     continue
 
+                # Device timestamp must be read BEFORE Release() — the grab
+                # result returns to the pool there.
+                try:
+                    dev_ts = grab.TimeStamp
+                    if self.ts_domain is None:
+                        self.ts_domain = "basler_device_ticks"
+                except Exception:
+                    dev_ts = None
+
                 # Always convert so Bayer demosaicing + WB ratios are applied
                 converted = converter.Convert(grab)
                 frame = converted.Array
                 grab.Release()
-                self._write_frame(frame)
+                self._write_frame(frame, device_ts=dev_ts)
 
                 # Lock WB after 1 second — ratios have converged by then
                 if not wb_locked and self.elapsed() >= 1.0:
@@ -769,6 +814,20 @@ class LucidWorker(CameraWorker):
                     continue
 
                 try:
+                    # Read the device timestamp while we still hold the buffer;
+                    # requeue_buffer() below returns it to the driver pool.
+                    try:
+                        dev_ts = buffer.timestamp_ns
+                        if self.ts_domain is None:
+                            self.ts_domain = "arena_device_ns"
+                    except Exception:
+                        try:
+                            dev_ts = buffer.timestamp
+                            if self.ts_domain is None:
+                                self.ts_domain = "arena_device_ticks"
+                        except Exception:
+                            dev_ts = None
+
                     pdata = ctypes.cast(buffer.pdata,
                                         ctypes.POINTER(ctypes.c_ubyte))
                     arr   = np.ctypeslib.as_array(
@@ -783,7 +842,7 @@ class LucidWorker(CameraWorker):
                     continue
 
                 device.requeue_buffer(buffer)
-                self._write_frame(frame)
+                self._write_frame(frame, device_ts=dev_ts)
                 if self.frame_count in (1, 10, 50) or self.frame_count % 100 == 0:
                     print(f"[{self.name}] frame #{self.frame_count} written "
                           f"({self.elapsed():.1f}s elapsed)")
@@ -805,15 +864,22 @@ class LucidWorker(CameraWorker):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Display — 2×3 grid: [RGBD-1 | RGBD-2 | Basler-1]
-#                      [Basler-2 | Lucid  |   —    ]
+# Display — grid sized to the actual camera count (e.g. 2x2 for 4 cameras),
+# so no blank padding tiles are added. Previously a fixed 3-column layout
+# meant 4 workers got padded to 6 tiles (2 black tiles), 5 workers to 6, etc.
 # Handles any number of workers gracefully.
 # ─────────────────────────────────────────────────────────────────────────────
 def display_loop(workers, duration):
+    import math
     PREVIEW_W = 480
     PREVIEW_H = 270
-    COLS      = 3
     EXP_STEP  = 0.20
+
+    N = max(len(workers), 1)
+    # Near-square layout: e.g. 1->1x1, 2->2x1, 3->2x2(3 tiles,1 blank),
+    # 4->2x2(exact), 5->3x2(1 blank), 6->3x2(exact).
+    COLS = math.ceil(math.sqrt(N))
+    ROWS = math.ceil(N / COLS)
 
     lucid_worker = next((w for w in workers if isinstance(w, LucidWorker)), None)
     last_good    = {w.name: None for w in workers}
@@ -822,7 +888,7 @@ def display_loop(workers, duration):
     while True:
         if all(w.start_time is not None or w.error is not None for w in workers):
             break
-        waiting = np.full((PREVIEW_H * 2, PREVIEW_W * COLS, 3), 30, dtype=np.uint8)
+        waiting = np.full((PREVIEW_H * ROWS, PREVIEW_W * COLS, 3), 30, dtype=np.uint8)
         cv2.putText(waiting, "Waiting for cameras...",
                     (10, PREVIEW_H), cv2.FONT_HERSHEY_SIMPLEX,
                     0.9, (200, 200, 200), 2)
@@ -913,12 +979,19 @@ def display_loop(workers, duration):
 # ─────────────────────────────────────────────────────────────────────────────
 # RGBD device discovery helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def _find_rgbd_backends(max_rgbd=2):
+def _find_rgbd_backends(max_rgbd=2, allow_webcam_fallback=False):
     """
     Returns a list of dicts:
       {'backend': 'realsense'|'kinect'|'opencv', 'index': int, 'label': str}
     up to max_rgbd devices.
     Priority: RealSense > Kinect > OpenCV.
+
+    allow_webcam_fallback=False (default) disables step 3 entirely, so a
+    laptop/USB webcam can never silently occupy an RGBD slot when a real
+    RealSense/Kinect isn't found or fails to enumerate. This existed to catch
+    RGBD-ish devices like Orbbec that only show up as a generic UVC device,
+    but on rigs with a fixed camera count it just masks a real RGBD failure
+    (D435 not enumerating) as if a webcam were the intended RGBD camera.
     """
     MAX_RGBD = max_rgbd
     found    = []
@@ -950,8 +1023,8 @@ def _find_rgbd_backends(max_rgbd=2):
         except Exception as e:
             print(f"  Kinect enumeration failed: {e}")
 
-    # 3. Generic OpenCV fallback — probe a few indices
-    if len(found) < MAX_RGBD:
+    # 3. Generic OpenCV fallback — probe a few indices (opt-in only)
+    if allow_webcam_fallback and len(found) < MAX_RGBD:
         # Common USB indices for RGBD cameras not covered above (e.g. Orbbec)
         for idx in range(4):
             if len(found) >= MAX_RGBD:
@@ -974,8 +1047,9 @@ def _find_rgbd_backends(max_rgbd=2):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
-                       max_rgbd=2, lucid_packet_size=1400, lucid_packet_delay=60000,
-                       depth_width=None, depth_height=None):
+                       max_rgbd=1, lucid_packet_size=1400, lucid_packet_delay=60000,
+                       depth_width=None, depth_height=None,
+                       allow_webcam_fallback=False):
     """
     Records simultaneously from:
       • Up to 2 RGBD cameras  (RealSense / Azure Kinect / OpenCV fallback)
@@ -993,7 +1067,8 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
 
     # ── 1. RGBD cameras ──────────────────────────────────────────────────────
     print("\n=== Enumerating RGBD cameras ===")
-    rgbd_devs = _find_rgbd_backends(max_rgbd=max_rgbd)
+    rgbd_devs = _find_rgbd_backends(max_rgbd=max_rgbd,
+                                     allow_webcam_fallback=allow_webcam_fallback)
     print(f"Found {len(rgbd_devs)} RGBD device(s)")
 
     for i, dev in enumerate(rgbd_devs, start=1):
@@ -1159,12 +1234,23 @@ def record_all_cameras(duration_seconds=90, width=1280, height=720, fps=15,
             "max_pacing_drift_s": (round(drift, 4) if drift is not None else None),
             "error": w.error,
         }
+        meta["cameras"][w.name]["timestamp_domain"] = w.ts_domain
+        meta["cameras"][w.name]["device_timestamps_present"] = bool(
+            [d for d in w.device_times if d is not None])
         if ts:
             ts_file = f"timestamps_{w.name}_{timestamp}.csv"
+            dev = w.device_times
             with open(ts_file, "w") as f:
-                f.write("frame_index,unix_time,seconds_from_start\n")
+                f.write("frame_index,host_unix_time,host_seconds_from_start,"
+                        "device_timestamp,device_delta\n")
+                d0 = next((d for d in dev if d is not None), None)
                 for i, t in enumerate(ts):
-                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f}\n")
+                    d = dev[i] if i < len(dev) else None
+                    # device_delta is relative to this camera's own first frame,
+                    # readable without knowing the tick rate or epoch.
+                    dd = "" if (d is None or d0 is None) else f"{d - d0}"
+                    ds = "" if d is None else f"{d}"
+                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f},{ds},{dd}\n")
             meta["cameras"][w.name]["timestamps_file"] = ts_file
 
     meta_file = f"recording_metadata_{timestamp}.json"
@@ -1201,10 +1287,17 @@ if __name__ == '__main__':
     ap.add_argument('--duration', type=int, default=90, help="Recording duration in seconds")
     ap.add_argument('--width', type=int, default=1280)
     ap.add_argument('--height', type=int, default=720)
-    ap.add_argument('--max-rgbd', type=int, default=2,
-                    help="How many RGBD (RealSense/Kinect) cameras to use, default 2. "
-                         "Set to 1 or 0 to exclude a camera that is being removed from "
-                         "the rig or is in a bad USB state.")
+    ap.add_argument('--max-rgbd', type=int, default=1,
+                    help="How many RGBD (RealSense/Kinect) cameras to use, default 1 "
+                         "(matches a 4-camera rig: 2 Basler + 1 Lucid + 1 RGBD). Set "
+                         "to 0 to exclude RGBD entirely, or higher if you add units.")
+    ap.add_argument('--allow-webcam-fallback', action='store_true',
+                    help="Allow a generic USB/laptop webcam to fill an RGBD slot via "
+                         "OpenCV VideoCapture when RealSense/Kinect aren't found. OFF "
+                         "by default — without this flag, if the real RGBD camera "
+                         "(e.g. the D435) fails to enumerate, that slot is just left "
+                         "empty and reported as failed, instead of silently recording "
+                         "a webcam in its place.")
     ap.add_argument('--depth-width', type=int, default=None,
                     help="Depth STREAM width (default: same as --width). Independent "
                          "of --width because depth is aligned to the colour stream, so "
@@ -1233,6 +1326,7 @@ if __name__ == '__main__':
         height=args.height,
         fps=args.fps,
         max_rgbd=args.max_rgbd,
+        allow_webcam_fallback=args.allow_webcam_fallback,
         lucid_packet_size=args.lucid_packet_size,
         lucid_packet_delay=args.lucid_packet_delay,
         depth_width=args.depth_width,

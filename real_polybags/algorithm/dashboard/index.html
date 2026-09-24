@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera System Digital Twin</title>
+<style>
+  :root { --bg:#0d0f13; --panel:#161a21; --line:#262c36; --ink:#e7edf3; --sub:#9aa7b4; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; }
+  #wrap { display:flex; flex-direction:column; height:100%; }
+  header { display:flex; align-items:center; gap:12px; padding:8px 12px;
+    background:var(--panel); border-bottom:1px solid var(--line); }
+  header .title { font-weight:600; }
+  header .sub { color:var(--sub); font-size:12px; }
+  #controls { margin-left:auto; display:flex; gap:6px; }
+  #controls button { font:600 11px/1 monospace; padding:5px 9px; border-radius:6px;
+    border:1px solid var(--line); background:#20262f; color:var(--ink);
+    cursor:pointer; }
+  #controls button:hover { background:#2a323d; }
+  #controls button.off { color:var(--sub); }
+  #status { font:600 11px/1 monospace; padding:4px 8px;
+    border-radius:6px; background:#20262f; color:var(--sub); }
+  #status.on { color:#5ee08a; } #status.off { color:#ff6b6b; }
+  /* two panels side by side (stack when narrow) */
+  #stage { flex:1; display:flex; min-height:0; }
+  .panel { position:relative; flex:1 1 0; min-width:180px; min-height:0;
+    border-right:1px solid var(--line); overflow:hidden; }
+  .panel:last-child { border-right:0; }
+  .panel canvas { position:absolute; inset:0; width:100%; height:100%;
+    display:block; cursor:grab; }
+  .panel canvas:active { cursor:grabbing; }
+  .plabel { position:absolute; left:10px; top:8px; z-index:2; font:700 12px/1 monospace;
+    background:rgba(0,0,0,.55); border:1px solid var(--line); border-radius:6px;
+    padding:5px 8px; letter-spacing:.5px; }
+  .count { position:absolute; right:10px; top:8px; z-index:2; background:rgba(0,0,0,.55);
+    border:1px solid var(--line); border-radius:6px; padding:5px 8px;
+    font:600 12px/1.4 monospace; text-align:right; }
+  .count .passed { margin-top:2px; color:#7be6a6; font-size:13px; }
+  .count .ref { color:var(--sub); font-size:10px; font-weight:400; }
+  .legend { position:absolute; left:10px; bottom:10px; z-index:2; background:rgba(0,0,0,.55);
+    border:1px solid var(--line); border-radius:8px; padding:7px 9px; font-size:12px; }
+  .legend .row { display:flex; align-items:center; gap:7px; margin:3px 0; }
+  .legend .dot { width:11px; height:11px; border-radius:2px; }
+  .legend .hint { color:var(--sub); margin-top:5px; font-size:11px; max-width:190px; }
+  /* always side by side (RAW | FUSED), even in the narrow combined-page panel */
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <div>
+      <div class="title">Camera System Digital Twin</div>
+      <div class="sub" id="hdr-sub">conveyor · live polybag positions</div>
+    </div>
+    <div id="controls">
+      <button id="btn-play" title="Play / Pause">⏸ Pause</button>
+      <button id="btn-loop" title="Loop at end">🔁 Loop: on</button>
+    </div>
+    <div id="status" class="off">MQTT ◦ connecting</div>
+  </header>
+  <div id="stage">
+    <section class="panel">
+      <div class="plabel">RAW · per-camera</div>
+      <canvas id="map-raw"></canvas>
+      <div class="count" id="count-raw">—</div>
+      <div class="legend" id="legend-raw"></div>
+    </section>
+    <section class="panel">
+      <div class="plabel">FUSED · global IDs</div>
+      <canvas id="map-fused"></canvas>
+      <div class="count" id="count-fused">—</div>
+      <div class="legend" id="legend-fused"></div>
+    </section>
+  </div>
+</div>
+<script src="vendor/mqtt.min.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>

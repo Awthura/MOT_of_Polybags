@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OVGU AMS — Validate extrinsics</title>
+<link rel="stylesheet" href="ams.css">
+<style>
+  .val-grid { display:grid; grid-template-columns:minmax(280px,360px) 1fr; gap:14px; align-items:start; }
+  @media (max-width:1000px){ .val-grid{ grid-template-columns:1fr; } }
+  .cams { display:flex; flex-direction:column; gap:10px; }
+  .cam-card { background:#0d0f13; border-radius:var(--radius); overflow:hidden;
+    border:1px solid #1e2733; }
+  .cam-card .hd { display:flex; align-items:center; gap:8px; padding:6px 10px;
+    font:600 12px/1 var(--mono,monospace); }
+  .swatch { width:12px; height:12px; border-radius:50%; flex:none; }
+  .cam-card .frame-wrap { position:relative; background:#000; }
+  .cam-card img { display:block; width:100%; cursor:crosshair; }
+  .cdot { position:absolute; width:11px; height:11px; margin:-6px 0 0 -6px; border-radius:50%;
+    border:2px solid #000; box-shadow:0 0 0 1px rgba(255,255,255,.5); pointer-events:none; }
+  #val-canvas-wrap { position:relative; background:#0d0f13; border-radius:var(--radius);
+    overflow:hidden; height:640px; }
+  #val-canvas { width:100%; height:100%; display:block; }
+  .val-badge { position:absolute; top:8px; left:8px; z-index:3; font:600 11px/1.4 monospace;
+    background:rgba(0,0,0,.6); color:#cfe; padding:4px 8px; border-radius:6px; }
+  .val-hud { position:absolute; bottom:8px; left:8px; z-index:3; font:600 11px/1.4 monospace;
+    background:rgba(0,0,0,.6); color:#dfe; padding:5px 9px; border-radius:6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="mark">AMS</div>
+  <div>
+    <h1>Validate extrinsics</h1>
+    <div style="font-size:12px;opacity:.85">OVGU · project every camera onto the dashboard belt</div>
+  </div>
+  <nav class="nav">
+    <a href="/">Intrinsics</a>
+    <a href="/extrinsics">Extrinsics</a>
+    <a href="/calib3d">3D map</a>
+    <a href="/validate" class="on">Validate</a>
+  </nav>
+  <div class="sub" id="val-hdr">loading…</div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2><span class="step">✓</span> Cross-camera validation</h2>
+    <p class="note" style="margin-top:0">
+      Double-click a feature in any camera frame (left). Its saved extrinsics maps
+      it to a belt position, drawn on the dashboard map (right) in that camera's
+      colour. Click the <strong>same physical point in several cameras</strong> —
+      the dots should land on top of each other. Do it across the whole belt to
+      check the fit everywhere.
+    </p>
+    <div class="row">
+      <button id="val-frameset" class="ghost">Show: board frames</button>
+      <button id="val-clear" class="ghost">Clear points</button>
+      <div class="sub" id="val-count">0 points</div>
+    </div>
+
+    <div class="val-grid" style="margin-top:12px">
+      <div class="cams" id="val-cams"></div>
+      <div>
+        <div id="val-canvas-wrap">
+          <div class="val-badge">DASHBOARD MAP · drag=orbit · wheel=zoom</div>
+          <canvas id="val-canvas"></canvas>
+          <div class="val-hud" id="val-hud">double-click a camera frame</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.js" }}
+</script>
+<script src="common.js"></script>
+<script type="module" src="validate.js"></script>
+</body>
+</html>

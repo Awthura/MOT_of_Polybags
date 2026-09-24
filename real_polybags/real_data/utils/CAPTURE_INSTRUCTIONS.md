@@ -35,11 +35,28 @@
 pip install pypylon pyrealsense2
 # Lucid: install the Arena SDK + arena_api Python wheel from Lucid's website
 python record_basler_lucid_rgbd.py --fps 15 --duration 90
-python record_basler_lucid_rgbd.py --fps 15 --duration 90 --max-rgbd 1
 ```
 
-Feature parity with the macOS script as of 2026-07-27: resilient sync,
-frozen fps clock, per-frame timestamps + `recording_metadata_*.json`,
+**Confirmed working on Windows against all 4 cameras (2026-07-28.)**
+
+Both scripts now default to the **4-camera rig** — 2 Basler + 1 Lucid + 1 RGBD
+— after one RealSense was removed from the mount. Raise `--max-rgbd` (Windows)
+or `--max-realsense` (macOS) to 2 only if a second unit is refitted, and read
+issue 2 first.
+
+Two behaviours worth knowing:
+
+- **A generic USB/laptop webcam will NOT be used as an RGBD camera** unless you
+  pass `--allow-webcam-fallback`. The fallback exists for RGBD-ish devices that
+  only appear as generic UVC (e.g. Orbbec), but on a fixed rig it silently
+  masked a real failure: if the D435 failed to enumerate, a webcam quietly took
+  its slot and the run looked successful. Off by default, so that slot is now
+  reported as failed instead.
+- **The preview grid is sized to the camera count** (near-square) rather than a
+  fixed 3 columns, so 4 cameras tile 2x2 with no dead panels.
+
+Feature parity with the macOS script: resilient sync, frozen fps clock,
+per-frame host + device timestamps, `recording_metadata_*.json`,
 playback-speed warnings, and `--lucid-packet-size`/`--lucid-packet-delay`/
 `--depth-width`/`--depth-height` tuning.
 
@@ -250,6 +267,47 @@ Both scripts now write `timestamps_<camera>_<run>.csv` (real per-frame capture
 times) and `recording_metadata_<run>.json` (measured fps, playback speed error,
 pacing drift). **Use those for any temporal analysis, not the video timebase.**
 The end-of-run summary flags any camera off by more than 5%.
+
+The CSV carries two clocks per frame, because neither alone is enough:
+
+| column | meaning |
+|---|---|
+| `host_unix_time` | host clock, sampled after transfer + conversion. Shared across cameras (one host records all), but carries per-camera latency. |
+| `device_timestamp` | the camera's own timestamp. Precise, but on that camera's private clock and in SDK-specific units. |
+| `device_delta` | device timestamp relative to that camera's first frame — readable without knowing the tick rate. |
+
+`timestamp_domain` in the metadata JSON says how to interpret
+`device_timestamp`: `aravis_device_ns` (nanoseconds), `basler_device_ticks`
+(model-dependent rate, and it changes if PTP is enabled), `arena_device_ns`, or
+a librealsense domain such as `global_time`. Units are recorded verbatim rather
+than normalised, because converting blindly would silently produce wrong
+numbers.
+
+Pairing the two clocks is what makes ~10–30 ms cross-camera alignment possible
+without PTP hardware: the device clock supplies precision, the host clock a
+common origin.
+
+### 3b. Measuring how well-synchronized the cameras actually are
+
+```bash
+cd raw_recordings
+python3 ../utils/measure_sync.py                 # newest run
+python3 ../utils/measure_sync.py --json skew.json
+```
+
+Reports per-camera pacing, cross-camera skew (p95 and worst-case), and
+device-vs-host clock drift in ppm.
+
+**Run this before buying any synchronization hardware.** The key column is
+`floor` = 1/(2·fps): the closest a camera can be to an arbitrary instant purely
+because of its frame rate. If measured skew is already at that floor, the
+cameras are as aligned as their frame rates permit and a PTP switch would change
+nothing — the fix is a higher frame rate (issue 4 below). The tool states this
+verdict explicitly rather than leaving it to be inferred.
+
+A drift figure above ~100 ppm is worth attention: over a 90 s run that is ~9 ms
+of accumulated error, the same order as the skew being measured. Drift is
+correctable in software; it does not require hardware either.
 
 To correct existing files (lossless container remux, keeps `.orig.avi`):
 

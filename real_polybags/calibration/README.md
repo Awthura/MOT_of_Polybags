@@ -1,0 +1,333 @@
+# OVGU AMS — camera calibration
+
+Calibrates the conveyor rig's cameras (2× Basler GigE, 1× Lucid Triton GigE,
+RealSense D435 — five recorded streams) for **intrinsics**, **extrinsics**, and a
+shared **metric belt-plane** coordinate frame.
+
+| document | when to read it |
+|---|---|
+| **[PROCEDURE.md](PROCEDURE.md)** | **doing a calibration** — step by step, with screenshots, in the order the work happens |
+| [USER_MANUAL.md](USER_MANUAL.md) | reference for individual controls, and troubleshooting |
+| [VALIDATION_PLAN.md](VALIDATION_PLAN.md) | establishing a finished calibration is correct, not merely complete |
+| this file | why it is built this way, and how the method itself is verified |
+
+> **Calibration status.** Four cameras are solved and committed in `results/`:
+> `basler_1` (clean, trusted metric reference), `basler_2` (metric, agrees with
+> basler_1 to about 11 mm mean), `lucid` and `rgbd_1_color` (homography-only, so
+> their across-belt position is approximate). `rgbd_2_color` is not calibrated, so
+> the shared frame carries four cameras, not five. The digital twin consumes these
+> files directly. To redo a calibration from recordings, follow
+> [PROCEDURE.md](PROCEDURE.md).
+
+## Why this exists
+
+Cross-camera association currently has nothing geometric to stand on. The
+association code carried over from the synthetic track
+(`synthetic_polybags/tracking/associate_cameras.py`) is deliberately
+calibration-free and leans on two cues:
+
+1. a **colour-class gate** (7 classes in the synthetic set), and
+2. **x-order rank** plus temporal overlap, assuming synchronized cameras.
+
+Neither survives contact with the real rig. Real polybags are a **single merged
+class**, so the class gate does not exist at all; and `measure_sync.py` showed
+the cameras are not frame-synced — skew sits at the frame-rate floor. Calibration
+replaces both cues with one shared metric frame: every camera maps its
+detections onto the same belt coordinates, and association becomes a
+nearest-neighbour question in millimetres.
+
+---
+
+## 1. Boards — what to print
+
+Two boards, already generated in [`boards/`](boards/):
+
+| file | paper | board | squares | square | dictionary | corners |
+|---|---|---|---|---|---|---|
+| `charuco_AMS-small_A4.pdf` | A4 | 175 × 200 mm | 7 × 8 | 25 mm | `DICT_4X4_50` | 42 |
+| `charuco_AMS-large_A3.pdf` | A3 | 252 × 324 mm | 7 × 9 | 36 mm | `DICT_5X5_100` | 48 |
+
+**Two sizes, because one will not do.** `basler_1` is an extreme close-up — the
+belt fills its frame — while `lucid`, `basler_2` and the RealSense see the whole
+belt width. A board big enough to be detected reliably by the wide cameras does
+not fit inside `basler_1`'s field of view; one small enough for `basler_1` is too
+coarse for the others.
+
+The two use **different ArUco dictionaries** so they can never be confused, even
+if both appear in one shot. Verified: each board's detector finds 0 corners on
+the other.
+
+### Printing instructions (send these with the PDF)
+
+- **Print at 100% / "actual size". Do not use "fit to page" or "shrink to fit".**
+  Scaling silently shrinks the board by a few percent, and every distance derived
+  from it is then wrong by that factor — with nothing downstream able to detect
+  it. The calibration will look perfectly healthy and the millimetres will be
+  wrong.
+- **Check the printed 100 mm bar with a ruler before use.** Each page prints one.
+  If it does not measure exactly 100 mm, the print was scaled — reprint.
+- **Matte paper**, not glossy. The rig's lighting already causes specular
+  blowout on the bags; a shiny board will lose corners under the same lights.
+- **Mount flat and rigid** — foamboard or stiff card. A bowed sheet is a
+  systematic error that no amount of averaging removes.
+- **Keep the footer.** It carries the full spec (squares, square size, marker
+  size, dictionary). A printed board whose parameters are unknown is scrap.
+
+To regenerate, or to produce other sizes:
+
+```bash
+python3 core/board.py                        # both, 300 dpi
+python3 core/board.py --preset large --dpi 600
+```
+
+The generator refuses to emit a page whose board plus footer would overflow the
+sheet, rather than quietly running the ruler off the bottom edge.
+
+---
+
+## 2. Capture procedure
+
+### 2a. Intrinsics — one camera at a time, board held in the air
+
+Per camera, ~20–30 shots. **Pose variety is what determines quality**, and it is
+the usual reason calibration silently fails: twenty frontal shots at the same
+distance give a confident, wrong answer.
+
+- **Tilt the board.** Roughly 20–45° away from square-on, in different
+  directions. Tilt is what separates focal length from distance — without it
+  they are ambiguous and `fx` is unreliable.
+- **Cover the whole frame**, corners included. Lens distortion is strongest at
+  the edges, so a board only ever seen in the centre leaves the distortion
+  coefficients unconstrained.
+- **Vary the distance** — near, mid, far.
+- Keep the board **sharp and still**. Motion blur moves corners; a blurred shot
+  is worse than no shot.
+
+The board does **not** need to be aligned or square to the camera here. The
+opposite: squareness is the failure mode.
+
+### 2b. Extrinsics — board flat on the belt
+
+This is where alignment matters. Lay the board **flat on the belt surface**,
+which defines the world Z = 0 plane, and record its position so every camera is
+solved against the same origin and axes.
+
+If two cameras can see the board at the same time, capture it — that measures
+their overlap directly. It is not required: cameras are tied together through
+the shared belt frame, not through seeing each other's views.
+
+---
+
+## 3. The tool
+
+```bash
+pip install flask          # only external dependency
+python3 app.py             # -> http://127.0.0.1:5000
+```
+
+Pick **Synthetic camera** as the source to exercise the whole workflow with no
+hardware attached. That is not just a demo: the synthetic camera's true `K` is
+known, so the tool reports the recovered values *against the truth* and the
+result can be verified rather than merely looked at. Worth doing once before
+the lab session, so you arrive knowing the software works.
+
+**Two pages, because there are two sittings.** Intrinsics describe the lens and
+can be measured at a desk; extrinsics describe where the camera is bolted and
+need the rig in its final state. Putting both on one page invites the wrong
+order, so they are separate:
+
+`/` — **intrinsics.** Setup → Capture → Calibrate → Belt map → Save.
+
+- **Capture** shows live corner detection and a frame-coverage grid, and
+  `Space` grabs a shot so both hands stay on the board.
+- **Calibrate** reports `K`, `D`, per-view error, coverage and tilt — plus a
+  direct comparison against known values when the source has them (synthetic
+  truth, or RealSense factory intrinsics).
+- **Save** writes `results/<camera>.json` — `K`, `D`, error figures, the board
+  used, and the image size, joined by `R`, `t` and both homographies once the
+  pose is solved.
+
+`/extrinsics` — **the rig page.** A status board over every camera, then the
+solve.
+
+- **The status board** is rebuilt from `results/*.json` on every load and
+  answers one question: what is still outstanding. Each camera reads `blocked`
+  (no intrinsics — bench work first), `ready` (this is the rig work),
+  `provisional` (a tape homography, no distortion correction) or `solved`, with
+  the specific next action spelled out underneath. Read before walking to the
+  rig, it is the difference between one trip and two.
+- **The anticipated measurements** — expected height per camera, planned origin
+  offsets, belt dimensions — are recorded up front and persisted to
+  `results/_plan/rig_plan.json`. This is what makes a solve checkable. A pose is
+  easy to look at and hard to judge alone: 298 mm above the belt reads as an
+  ordinary number until it is set beside the 1400 mm the camera is mounted at.
+  Each solve is reported as measured *versus* anticipated, which catches the one
+  failure that is otherwise undetectable — a board printed at "fit to page",
+  which leaves the reprojection error healthy while every millimetre is wrong by
+  the scale factor. A camera with nothing recorded reports `no ref` rather than
+  passing: an unmade comparison must not look like a successful one.
+- **The solve** reloads that camera's saved intrinsics, prefills the offset from
+  the plan, and then lets you click anywhere on the preview to read that point
+  in belt millimetres. Checking a couple of those against a tape measure is the
+  fastest honest test of the whole chain.
+
+Both pages write the same per-camera file, and a save never discards the other
+half: saving intrinsics at the bench keeps a pose solved earlier at the rig,
+flagging it stale rather than deleting it if the intrinsics changed under it.
+
+**Which physical camera, not just which name.** This rig has two Basler units
+told apart by nothing but enumeration order, so a **Device** field appears
+whenever more than one unit of a kind is connected — pick one rather than the
+tool guessing which camera answers first. The serial actually connected to is
+recorded into the saved calibration; if the same serial ever turns up under
+two different camera names, both status-board rows say so. A folder replay has
+no live hardware to ask, so the same field there accepts a typed serial
+instead — recorded as *asserted*, not hardware-confirmed, and always shown
+that way.
+
+**Adopting factory intrinsics directly.** The RealSense reports its own
+`fx, fy, ppx, ppy` and distortion model from the sensor. A green banner offers
+**Use factory intrinsics** the moment a RealSense session starts — no board
+capture needed. Doing the board fit once and comparing against those factory
+numbers (the "vs known reference" panel) is still the acceptance test for the
+method itself; adopting them directly is the fast path for every session after
+that.
+
+**Clearing a saved calibration.** Both pages can delete a camera's saved
+result outright — a **Clear saved calibration** button on the intrinsics page
+(keyed to the typed camera name) and a **Clear** button per row on the rig
+status board. Removes intrinsics and any pose together, since the file holds
+both and there is no smaller unit to remove; asks for confirmation first.
+
+**Not just conveyors.** Every camera is solved against one shared plane; that
+the plane is a belt here is a naming convention, not a constraint. Panel B2 on
+the rig page takes a top-down map of whatever plane a rig watches — a floor
+plan, a CAD export, an overhead photo (`.png`/`.jpg`) or a scan (`.glb`) — and
+renders footprints, coverage and overlap against it.
+
+**Board-free extrinsics.** With a georeferenced map in hand, panel B3 solves a
+camera's plane mapping from **one frame and a handful of clicked point pairs**
+— a feature in the image, the same feature on the map. No board, no rig visit,
+and it works on footage already recorded. With intrinsics the homography is
+decomposed into a real `R`/`t` (verified against a known camera: position to
+0.24 mm, held-out points to 0.05 mm); without them it degrades explicitly to a
+plane mapping with no camera position, and the stored correspondences mean
+re-solving after measuring the lens costs no re-clicking.
+
+Points are fitted with RANSAC and each one's error is reported in millimetres,
+so a mis-click is rejected *and named* rather than quietly bending the fit —
+measured, one bad point costs 0.04 mm RMS here against 261 mm for a plain
+least-squares fit. Four pairs determine a homography exactly and therefore
+prove nothing; the panel says so instead of letting a zero residual read as a
+perfect result.
+
+A GLB georeferences itself: glTF fixes lengths at metres and defines an
+origin, so scale and world origin come out of the file with nothing to click.
+A PNG carries no units and must be told two things — where world (0, 0) sits,
+and what a pixel is worth (typed, or measured from two clicks and a tape).
+Until it has both, the map is treated as a picture and the belt dimensions are
+used instead; a metric overlay against unknown units would be confident
+nonsense. An optional +Y click rotates the map so the plane's natural axis is
+aligned, baked into the stored image rather than carried as a term through
+every later transform. Grid spacing follows the map extent, so the same code
+reads correctly on a 0.2 m jig and a 120 m line.
+
+Verify the maths independently at any time:
+
+```bash
+python3 verify_synthetic.py --views 24        # renders a known camera, checks recovery
+```
+
+### Layout
+
+```
+calibration/
+  README.md              this file
+  app.py                 Flask server + JSON API
+  verify_synthetic.py    intrinsics/extrinsics ground-truth check, no hardware
+  verify_beltmap.py      multi-camera belt-map check, no hardware
+  extract_board_frames.py  recorded video -> calibration frames, selected for
+                         pose variety (the route around the missing SDKs)
+  boards/                print-ready PDFs + PNGs + machine-readable specs
+  core/
+    board.py             ChArUco definition, print-ready output, layout checks
+    intrinsics.py        detection -> K, D, coverage analysis, warnings
+    extrinsics.py        solvePnP -> R, t; belt-plane homography and transforms
+    beltmap.py           top-down conveyor map, footprints, overlap, parallax
+    sources.py           synthetic / folder / RealSense / Basler / Lucid
+    store.py             results schema (named `store`, not `io` — that would
+                         shadow the stdlib module on sys.path)
+    plan.py              rig plan, status board, measured-vs-anticipated checks
+  static/                AMS-themed pages (no build step)
+    index.html/app.js      intrinsics  (/)
+    extrinsics.html/.js    rig page    (/extrinsics)
+    common.js              shared helpers
+    ams.css                shared theme
+  results/               per-camera calibration JSON
+    _plan/rig_plan.json  session plan and anticipated measurements — one
+                         directory down, out of reach of the `results/*.json`
+                         glob that enumerates cameras
+```
+
+### The belt map
+
+The payoff. Once each camera has intrinsics **and** a belt-plane pose, step 5
+builds a top-down metric map of the conveyor from every saved calibration:
+
+- each camera's view rectified to bird's-eye and composited,
+- each camera's **footprint** — the belt area it actually covers — drawn as a
+  polygon in millimetres,
+- **pairwise overlap measured**, which finally answers whether these cameras
+  share a view. Nothing in the design assumes they do; a bag at (X, Y) mm is the
+  same bag whichever camera saw it, because all of them are solved against one
+  belt frame rather than against each other.
+
+Give it the belt's real dimensions. `auto_frame()` exists for when the extent is
+unknown, but on a tilted view it sizes the canvas to everything the cameras see
+— floor, framing, machinery — which measured several times the belt area in
+testing and leaves the region of interest a small patch in an empty canvas.
+
+```bash
+python3 verify_beltmap.py --save-dir /tmp/beltmap   # 3 synthetic cameras, checked
+```
+
+**One honest limitation.** The map assumes everything lies on Z = 0. A bag has
+height, so its top surface projects outward from the camera's nadir — for a
+60 mm bag in the verification rig, 10–45 mm of displacement depending on
+distance from the camera. That is a *systematic bias*, not noise: it does not
+average away, and it grows toward the frame edges. `parallax_error_mm()`
+quantifies it for a given camera, point and bag height, so it can be accounted
+for rather than discovered later.
+
+### Resolution matters
+
+Intrinsics are **resolution-specific**. The Basler a2A1920 has a 1920x1200
+sensor while this rig records 1280x720, so the camera is cropping or scaling —
+either way a `K` measured at one resolution does not transfer to the other.
+Calibrate at exactly the resolution you record at; the saved record stores
+`image_size` so a mismatch is at least detectable later.
+
+---
+
+## 4. How this gets verified
+
+Calibration is easy to get confidently wrong, so the plan checks it against
+things that are independently known rather than against itself:
+
+1. **Synthetic ground truth.** Render a board with a known virtual camera and
+   confirm the pipeline recovers the `K`, `R`, `t` it was generated with.
+2. **RealSense factory intrinsics.** The D435 is factory-calibrated —
+   `video_stream_profile.get_intrinsics()` gives `fx, fy, ppx, ppy` and a
+   distortion model. It is the only camera on the rig with independent ground
+   truth, so calibrating it with our own tool and comparing is the real
+   acceptance test. The Basler and Lucid cameras ship **uncalibrated** (their
+   intrinsics depend on whatever lens is fitted), so they have nothing to check
+   against — which is exactly why the RealSense result has to be trusted first.
+3. **Focal-length sanity band.** `fx ≈ f_mm / pixel_size_mm` from the lens
+   marking and sensor spec. Catches a degenerate pose set, which can produce a
+   low reprojection error alongside a badly wrong `K`.
+4. **Reprojection error**, reported per view rather than as one mean, so bad
+   poses are identifiable instead of averaged away.
+5. **Cross-camera agreement** in millimetres on the same physical point.
+6. **Belt width** against a tape measurement, and the RealSense's true metric
+   depth as a second, independent scale check.

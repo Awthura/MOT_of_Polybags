@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OVGU AMS — 3D Extrinsics</title>
+<link rel="stylesheet" href="ams.css">
+<style>
+  .c3d-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:1100px){ .c3d-grid{ grid-template-columns:1fr; } }
+  #c3d-canvas-wrap, #c3d-img-wrap {
+    position:relative; background:#0d0f13; border-radius:var(--radius);
+    overflow:hidden; height:520px; }
+  #c3d-canvas { width:100%; height:100%; display:block; cursor:crosshair; }
+  #c3d-img-wrap { display:flex; align-items:center; justify-content:center; }
+  #c3d-img { max-width:100%; max-height:100%; display:block; cursor:crosshair; }
+  .c3d-badge { position:absolute; top:8px; left:8px; z-index:3; font:600 11px/1.4 var(--mono,monospace);
+    background:rgba(0,0,0,.6); color:#cfe; padding:4px 8px; border-radius:6px; }
+  .c3d-hud { position:absolute; bottom:8px; left:8px; z-index:3; font:600 11px/1.5 monospace;
+    background:rgba(0,0,0,.6); color:#dfe; padding:6px 9px; border-radius:6px; white-space:pre; }
+  .imgdot { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
+    border:2px solid #fff; box-shadow:0 0 0 2px rgba(0,0,0,.5); z-index:4; pointer-events:none; }
+  .imgdot.val { border-color:#ffd23f; }
+  .pilllist { display:flex; gap:6px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="mark">AMS</div>
+  <div>
+    <h1>Extrinsics — 3D map</h1>
+    <div style="font-size:12px;opacity:.85">OVGU · point-correspondence against the conveyor mesh</div>
+  </div>
+  <nav class="nav">
+    <a href="/">Intrinsics</a>
+    <a href="/extrinsics">Extrinsics</a>
+    <a href="/calib3d" class="on">3D map</a>
+  </nav>
+  <div class="sub" id="c3d-hdr">no dataset</div>
+</header>
+
+<main>
+
+  <!-- 1 · Sources -->
+  <section class="panel">
+    <h2><span class="step">1</span> Sources</h2>
+    <div class="row">
+      <div class="field">
+        <label for="c3d-dataset">Dataset</label>
+        <select id="c3d-dataset"></select>
+      </div>
+      <div class="field">
+        <label for="c3d-map">Map (.glb)</label>
+        <select id="c3d-map"></select>
+      </div>
+      <div class="field">
+        <label for="c3d-cam">Camera</label>
+        <select id="c3d-cam"></select>
+      </div>
+      <div class="field">
+        <label for="c3d-intr">Intrinsics</label>
+        <select id="c3d-intr"></select>
+      </div>
+      <button id="c3d-load" class="accent">Load</button>
+    </div>
+    <div class="note" id="c3d-src-note">Datasets live under <code>datasets/</code> in the repo.</div>
+  </section>
+
+  <!-- 1b · Map frame -->
+  <section class="panel">
+    <h2><span class="step">1b</span> Map frame — origin &amp; conveyor axis</h2>
+    <p class="note" style="margin-top:0">
+      Define the world frame on the mesh: double-click the <strong>origin</strong>
+      (centre of the 8×11 board under basler_1), then double-click a point
+      <strong>along the conveyor</strong> (a far board) to set the axis. World
+      <strong>+Y runs along the conveyor</strong>, +X across. The three boards
+      should then read a near-constant X.
+    </p>
+    <div class="row">
+      <button id="c3d-set-origin" class="ghost" disabled>① Set origin (dbl-click map)</button>
+      <button id="c3d-set-axis" class="ghost" disabled>② Set +Y along conveyor (dbl-click map)</button>
+      <button id="c3d-frame-save" class="accent" disabled>Save frame</button>
+      <button id="c3d-frame-reset" class="ghost">Reset frame</button>
+    </div>
+    <div id="c3d-frame-state" class="note" style="margin-top:8px">Frame: origin (0,0), +Y = mesh X.</div>
+  </section>
+
+  <!-- 2 · Calibrate -->
+  <section class="panel">
+    <h2><span class="step">2</span> Calibrate — pick matching points</h2>
+    <p class="note" style="margin-top:0">
+      Double-click a feature on the <strong>3D conveyor</strong> (left) and the
+      same feature in the <strong>camera frame</strong> (right) — that is one
+      correspondence. Orbit the map with drag, zoom with the wheel. Four pairs
+      is the minimum; a fifth is the first that gives a real error.
+    </p>
+    <div class="c3d-grid">
+      <div>
+        <div id="c3d-canvas-wrap">
+          <div class="c3d-badge">3D MAP · drag=orbit · wheel=zoom · dbl-click=pick</div>
+          <canvas id="c3d-canvas"></canvas>
+          <div class="c3d-hud" id="c3d-hud">load a dataset</div>
+        </div>
+      </div>
+      <div>
+        <div id="c3d-img-wrap">
+          <div class="c3d-badge" id="c3d-img-badge">CAMERA FRAME</div>
+          <img id="c3d-img" alt="camera frame">
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <button id="c3d-solve" class="accent" disabled>Solve extrinsics</button>
+      <button id="c3d-save" class="accent" disabled>Save to results</button>
+      <button id="c3d-undo" class="ghost">Undo last pair</button>
+      <button id="c3d-clear" class="ghost">Clear pairs</button>
+      <div class="field">
+        <label for="c3d-rectified" class="row" style="gap:6px;align-items:center">
+          <input type="checkbox" id="c3d-rectified" checked>
+          <span>frame is rectified (D = 0)</span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="c3d-nointr" class="row" style="gap:6px;align-items:center"
+               title="For a camera with unreliable intrinsics (e.g. lucid): fit the homography on the RAW frame with no undistortion. No 3D pose, and edges are less accurate, but it avoids warping from bad intrinsics.">
+          <input type="checkbox" id="c3d-nointr">
+          <span>ignore intrinsics (raw frame, homography only)</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="split" style="margin-top:12px">
+      <div>
+        <strong class="caps">Correspondences</strong>
+        <div class="tablewrap" style="margin-top:6px;max-height:240px;overflow:auto">
+          <table class="roster" id="c3d-pairs">
+            <thead><tr><th>#</th><th>image px</th><th>world (X,Z) mm</th><th>resid</th><th></th></tr></thead>
+            <tbody id="c3d-pair-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <strong class="caps">Result</strong>
+        <div id="c3d-result" style="margin-top:6px"><p class="note">Nothing solved yet.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 · Validate -->
+  <section class="panel">
+    <h2><span class="step">3</span> Validate</h2>
+    <p class="note" style="margin-top:0">
+      With a solve in hand, double-click a test point in the camera frame — its
+      predicted world location is plotted on the 3D map (yellow). Click where it
+      <em>should</em> be to log an error. Ten points enable the KPIs.
+    </p>
+    <div class="row">
+      <button id="c3d-val-toggle" class="ghost" disabled>Validation mode: OFF</button>
+      <button id="c3d-val-clear" class="ghost">Clear validation</button>
+      <div class="sub" id="c3d-val-count">0 points</div>
+    </div>
+    <div id="c3d-kpi" style="margin-top:10px"></div>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+<script type="importmap">
+{ "imports": {
+  "three": "/vendor/three/three.module.js",
+  "three/addons/": "/vendor/three/"
+}}
+</script>
+<script src="common.js"></script>
+<script type="module" src="calib3d.js"></script>
+</body>
+</html>

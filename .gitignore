@@ -8,6 +8,12 @@
 *.mp4
 *.mov
 
+# ...except artefacts that are source, not output: the printed calibration
+# boards, and the screenshots PROCEDURE.md renders. Both were previously kept
+# only by `git add -f`, which is a step someone eventually forgets.
+!real_polybags/calibration/boards/*.png
+!real_polybags/calibration/docs/screenshots/*.png
+
 # Binary / large data
 *.npy
 *.pkl
@@ -24,9 +30,28 @@
 *.stl
 *.obj
 *.fbx
+*.glb
+*.gltf
+
+# Uploaded workspace maps live here — a scan of the cell plus its rendered
+# top-down PNG. Rig-specific and potentially large, so the artefacts stay
+# local; the georeferencing metadata (meta.json) is small, but is kept out
+# too since it is meaningless without the image it refers to.
+real_polybags/calibration/results/_workspace/
 
 # PDF (generated from .md sources)
 *.pdf
+
+# LaTeX / build artefacts (generated from .tex/.md sources, never source)
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.nav
+*.snm
 
 # Tracking outputs — generated files, not source
 tracking_results/
@@ -70,6 +95,15 @@ pilot_instructions.md
 
 # YOLO training output
 runs/
+weights/
+
+# Curated local video sets for the digital-twin demo (avi are large + gitignored;
+# their timestamp CSVs/metadata belong with them, so keep the whole dir local).
+real_polybags/algorithm/videos/
+
+# Calibration recordings (board + belt videos, ~1.8 GB). A Google Drive asset
+# (see DATA.md); the .avi are already ignored, this keeps the metadata with them.
+real_polybags/calibration/calibration_videos/
 
 # Python
 __pycache__/
@@ -94,3 +128,19 @@ build/
 .idea/
 *.swp
 *.swo
+
+# Calibration boards — these are DELIVERABLES, not generated clutter. The exact
+# printed geometry must stay recoverable: a board whose square size or
+# dictionary is unknown afterwards is scrap, and reprinting a differently-sized
+# board silently invalidates every metric result derived from the old one.
+# Overrides the blanket *.png / *.pdf rules above.
+!real_polybags/calibration/boards/*.pdf
+!real_polybags/calibration/boards/*.png
+!real_polybags/calibration/boards/*.json
+
+# Local editor/agent settings backups
+.claude/settings.local.json.bak
+
+# LaTeX report — local working directory, not shared repo content.
+# Keeps the .tex sources, build artefacts (.aux/.log/.pdf/etc.) and figures local.
+report/

@@ -1,6 +1,12 @@
 """
-Combined 5-camera recorder for macOS: 2x Basler (pypylon) + 1x Lucid (Aravis,
-not Arena SDK — no macOS support there) + 2x RealSense RGBD (pyrealsense2).
+Combined multi-camera recorder for macOS: 2x Basler (pypylon) + 1x Lucid
+(Aravis, not Arena SDK — no macOS support there) + RealSense RGBD
+(pyrealsense2).
+
+Defaults to a 4-camera rig (2 Basler + 1 Lucid + 1 RGBD), matching the current
+hardware after one RealSense was removed. Pass --max-realsense 2 if a second
+unit is refitted, but see CAPTURE_INSTRUCTIONS.md issue 2 first: the two D435s
+interfere at device-open time on a shared USB controller.
 
 Each camera connects/configures itself independently, then reports success or
 failure before waiting on a shared "go" event — a camera that fails to
@@ -39,6 +45,7 @@ CAPTURE_INSTRUCTIONS.md "Known issues" 2.
 
 import argparse
 import json
+import re
 import cv2
 import numpy as np
 from datetime import datetime
@@ -95,7 +102,16 @@ class CameraWorker:
         self.error        = None
         self.start_time   = None
         self.end_time     = None   # set on capture-loop exit; freezes elapsed()
-        self.frame_times  = []     # wall-clock capture time per written frame
+        self.frame_times  = []     # host wall-clock time per written frame
+        self.device_times = []     # camera's own timestamp per frame (may be None)
+        # Unit/epoch of device_times, set by each worker once it knows. Recorded
+        # verbatim rather than normalised, because the SDKs disagree: Aravis
+        # reports nanoseconds on the device clock, pylon reports device ticks
+        # whose frequency is model-dependent, and librealsense reports
+        # milliseconds in one of several domains. Converting blindly here would
+        # silently produce wrong numbers; downstream tooling is told the domain
+        # and converts explicitly.
+        self.ts_domain    = None
         # Setup and the actual synchronized start are decoupled: each worker
         # signals setup_done (success or failure) independently, so a camera
         # that fails to connect doesn't block the ones that did — replaces
@@ -150,18 +166,32 @@ class CameraWorker:
         if not self.out.isOpened():
             raise RuntimeError(f"Could not open VideoWriter: {self.output_file}")
 
-    def _write_frame(self, frame):
+    def _write_frame(self, frame, device_ts=None):
+        """Write a frame and record when it was captured.
+
+        Two clocks are recorded per frame, because neither alone is enough:
+
+        `host` (time.time()) is sampled here, i.e. AFTER the frame has crossed
+        the wire, been format-converted and been handed to the VideoWriter. It
+        therefore bundles transfer + conversion latency into what is supposed
+        to be a capture time, and that latency differs per camera and varies
+        frame to frame. It is a shared reference across cameras (one host
+        records all of them) but a noisy one.
+
+        `device_ts` is the camera's OWN timestamp for the exposure, supplied by
+        the caller because only each worker knows its SDK's call. It is precise
+        but sits on that camera's own clock, so it is not directly comparable
+        across cameras.
+
+        Pairing them is what makes ~10-30ms cross-camera alignment possible
+        without PTP: the device clock gives precision, the host clock gives a
+        common origin to map the device clocks onto. Both are written to
+        timestamps_<camera>_<run>.csv.
+        """
         if frame is not None and frame.size > 0:
             self.out.write(frame)
-            # Capture-time timestamp per frame. The AVI container carries a
-            # single fixed fps (the *target*), so a camera that runs below
-            # target produces a file that plays back too fast — Lucid records
-            # 85 frames of a 10s event, and at a 15fps header those 10 seconds
-            # replay in 5.7s, i.e. 1.76x too fast. Frame indices are therefore
-            # NOT proportional to time, which matters for anything temporal
-            # (velocity, cross-camera alignment, MOT). These timestamps are the
-            # ground truth for when each frame was actually captured.
             self.frame_times.append(time.time())
+            self.device_times.append(device_ts)
             self.frame_count += 1
             with self.lock:
                 self.latest_frame = frame.copy()
@@ -294,10 +324,22 @@ class BaslerWorker(CameraWorker):
                     grab.Release()
                     continue
 
+                # Read the device timestamp BEFORE Release() — the grab result
+                # is returned to the pool there and must not be touched after.
+                try:
+                    dev_ts = grab.TimeStamp
+                    if self.ts_domain is None:
+                        # pylon reports device ticks; the tick frequency is
+                        # model-dependent (and changes when PTP is enabled), so
+                        # record the raw value and let downstream convert.
+                        self.ts_domain = "basler_device_ticks"
+                except Exception:
+                    dev_ts = None
+
                 converted = converter.Convert(grab)
                 frame = converted.Array
                 grab.Release()
-                self._write_frame(frame)
+                self._write_frame(frame, device_ts=dev_ts)
 
                 if not wb_locked and self.elapsed() >= 1.0:
                     try:
@@ -319,6 +361,96 @@ class BaslerWorker(CameraWorker):
             self.release()
             print(f"[{self.name}] Done | Frames: {self.frame_count} | "
                   f"Incomplete: {self.incomplete} | Actual FPS: {self.actual_fps():.1f}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lucid pixel-format negotiation and decoding.
+#
+# Diagnosed 2026-07-31 against the real TRI032S-C on this rig: raw Aravis (not
+# the Arena SDK) requires GVCP *controller* access to write PixelFormat, and
+# when something else already holds that access, `set_pixel_format_from_string`
+# fails silently on EVERY format, not just 'BGR8'/'RGB8' — caught by the old
+# `except Exception: continue` with no visible sign anything was wrong. The
+# recorder would then fall back to `get_pixel_format_as_string()`, i.e.
+# whatever the camera happened to already be set to.
+#
+# Confirmed live: this camera's default/current format is 'BayerRG8', and
+# recording without ever changing it still produces colour IF the debayer
+# step uses the matching OpenCV constant. That is the second bug fixed here:
+# the decode used to hardcode cv2.COLOR_BAYER_BG2BGR regardless of which Bayer
+# variant the camera actually reported. GenICam and OpenCV do not name Bayer
+# patterns the same way — empirically verified (build a raw tile with a known
+# GenICam-standard layout, check which OpenCV constant recovers it correctly):
+#
+#   GenICam pattern -> matching OpenCV constant
+#   BayerRG8  -> COLOR_BAYER_BG2BGR      BayerBG8  -> COLOR_BAYER_RG2BGR
+#   BayerGR8  -> COLOR_BAYER_GB2BGR      BayerGB8  -> COLOR_BAYER_GR2BGR
+#
+# i.e. R<->B swap AND G<->G swap between the two letters — NOT the identity
+# mapping a first guess would reach for. Hardcoding BG2BGR happened to be
+# correct only because BayerRG8 is this camera's actual pattern; it would have
+# been silently wrong the moment a different Lucid unit, or this one after a
+# firmware reset, reported anything else.
+LUCID_PIXEL_FORMAT_PREFERENCE = (
+    'BGR8', 'RGB8',                                    # on-camera conversion, if ever writable
+    'BayerRG8', 'BayerGB8', 'BayerGR8', 'BayerBG8',     # native colour sensor output
+    'Mono8',                                            # last resort — genuinely no colour
+)
+
+# GenICam pattern letters -> the OpenCV constant that correctly decodes them,
+# per the verified table above (NOT a same-letters lookup).
+_GENICAM_TO_CV_BAYER = {
+    'RG': cv2.COLOR_BAYER_BG2BGR, 'BG': cv2.COLOR_BAYER_RG2BGR,
+    'GR': cv2.COLOR_BAYER_GB2BGR, 'GB': cv2.COLOR_BAYER_GR2BGR,
+}
+
+
+def negotiate_lucid_pixel_format(camera, log_prefix="[Lucid]"):
+    """Pick a pixel format the decoder below can actually handle, rather than
+    silently accepting whatever the camera happens to be in.
+
+    Returns the format string now in effect. If nothing in the preference list
+    could be written, this prints a WARNING banner rather than a one-line log
+    that's easy to miss — the recording will proceed, but colour correctness
+    is not guaranteed, and that needs to be visible immediately, not
+    discovered after the fact by eyeballing the video.
+    """
+    for fmt in LUCID_PIXEL_FORMAT_PREFERENCE:
+        try:
+            camera.set_pixel_format_from_string(fmt)
+            return fmt
+        except Exception:
+            continue
+    active = camera.get_pixel_format_as_string()
+    print(f"\n{'!' * 70}\n{log_prefix} WARNING: could not set ANY pixel format "
+          f"(tried {LUCID_PIXEL_FORMAT_PREFERENCE}).\n"
+          f"{log_prefix} Camera is running with whatever format it already had: "
+          f"'{active}'.\n"
+          f"{log_prefix} This usually means another process or device on the "
+          f"network already holds GigE Vision controller access to this "
+          f"camera — check for a Lucid viewer app, a leftover recorder run, "
+          f"or another machine on the same switch, and close it.\n"
+          f"{log_prefix} If '{active}' is 'Mono8' the recording will have NO "
+          f"colour at all. If it's a Bayer format, colour will still decode "
+          f"correctly (the debayer step below reads the actual pattern), but "
+          f"none of exposure/gain/region/frame-rate settings below could be "
+          f"applied either — verify the recording afterwards.\n{'!' * 70}\n")
+    return active
+
+
+def decode_lucid_frame(arr, bw, bh, chosen_fmt):
+    """Raw Aravis buffer bytes -> a BGR frame, honouring whichever pixel
+    format the camera actually reported rather than assuming one."""
+    if chosen_fmt == 'BGR8':
+        return arr.reshape(bh, bw, 3).copy()
+    if chosen_fmt == 'RGB8':
+        return cv2.cvtColor(arr.reshape(bh, bw, 3), cv2.COLOR_RGB2BGR)
+    m = re.search(r'Bayer(RG|GB|GR|BG)', chosen_fmt)
+    if m:
+        return cv2.cvtColor(arr.reshape(bh, bw), _GENICAM_TO_CV_BAYER[m.group(1)])
+    # Mono8, or anything unrecognised: treat as flat grayscale rather than
+    # guessing at a Bayer pattern that was never confirmed.
+    return cv2.cvtColor(arr.reshape(bh, bw), cv2.COLOR_GRAY2BGR)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -362,16 +494,7 @@ class LucidWorker(CameraWorker):
             _, _, w, h = camera.get_region()
             self.width, self.height = w, h
 
-            chosen_fmt = None
-            for fmt in ('BGR8', 'RGB8'):
-                try:
-                    camera.set_pixel_format_from_string(fmt)
-                    chosen_fmt = fmt
-                    break
-                except Exception:
-                    continue
-            if chosen_fmt is None:
-                chosen_fmt = camera.get_pixel_format_as_string()
+            chosen_fmt = negotiate_lucid_pixel_format(camera, log_prefix=f"[{self.name}]")
             print(f"[{self.name}] Pixel format: {chosen_fmt}")
 
             try:
@@ -479,19 +602,21 @@ class LucidWorker(CameraWorker):
                     continue
 
                 try:
+                    # Device timestamp must be read while we still hold the
+                    # buffer — it goes back to the stream pool on push_buffer().
+                    try:
+                        dev_ts = buf.get_timestamp()
+                        if self.ts_domain is None:
+                            self.ts_domain = "aravis_device_ns"
+                    except Exception:
+                        dev_ts = None
+
                     bw   = buf.get_image_width()
                     bh   = buf.get_image_height()
                     data = buf.get_data()
                     arr  = np.frombuffer(data, dtype=np.uint8)
 
-                    if chosen_fmt == 'BGR8':
-                        frame = arr.reshape(bh, bw, 3).copy()
-                    elif chosen_fmt == 'RGB8':
-                        frame = cv2.cvtColor(arr.reshape(bh, bw, 3), cv2.COLOR_RGB2BGR)
-                    elif 'Bayer' in chosen_fmt:
-                        frame = cv2.cvtColor(arr.reshape(bh, bw), cv2.COLOR_BAYER_BG2BGR)
-                    else:
-                        frame = cv2.cvtColor(arr.reshape(bh, bw), cv2.COLOR_GRAY2BGR)
+                    frame = decode_lucid_frame(arr, bw, bh, chosen_fmt)
 
                     if frame.shape[1] != self.width or frame.shape[0] != self.height:
                         frame = cv2.resize(frame, (self.width, self.height))
@@ -501,7 +626,7 @@ class LucidWorker(CameraWorker):
                     continue
 
                 stream.push_buffer(buf)
-                self._write_frame(frame)
+                self._write_frame(frame, device_ts=dev_ts)
 
         except Exception as e:
             self.error = str(e)
@@ -630,6 +755,19 @@ class RGBDWorker(CameraWorker):
             print(f"[{self.name}] RealSense connected: {dev_name} (S/N: {serial}) "
                   f"Target FPS: {self.fps}")
 
+            # Ask librealsense to report frame timestamps already mapped onto
+            # the host clock (GLOBAL_TIME domain). This is the one camera on the
+            # rig that can do the device->host clock mapping for us; without it
+            # timestamps come back on HARDWARE_CLOCK, an arbitrary device epoch
+            # that can't be compared to anything else.
+            try:
+                for s in profile.get_device().query_sensors():
+                    if s.supports(rs.option.global_time_enabled):
+                        s.set_option(rs.option.global_time_enabled, 1)
+                print(f"[{self.name}] global_time enabled (device clock mapped to host)")
+            except Exception as e:
+                print(f"[{self.name}] could not enable global_time: {e}")
+
             align = rs.align(rs.stream.color)
             for _ in range(30):
                 pipeline.wait_for_frames()
@@ -657,10 +795,17 @@ class RGBDWorker(CameraWorker):
                     self.incomplete += 1
                     continue
 
+                try:
+                    dev_ts = color_frame.get_timestamp()   # ms
+                    if self.ts_domain is None:
+                        self.ts_domain = str(color_frame.get_frame_timestamp_domain())
+                except Exception:
+                    dev_ts = None
+
                 color = np.asanyarray(color_frame.get_data())
                 depth = np.asanyarray(depth_frame.get_data())
 
-                self._write_frame(color)
+                self._write_frame(color, device_ts=dev_ts)
                 self._write_depth(depth)
 
         except Exception as e:
@@ -684,8 +829,22 @@ class RGBDWorker(CameraWorker):
 # Display
 # ─────────────────────────────────────────────────────────────────────────────
 def display_loop(workers, duration, verbose):
-    PREVIEW_W, PREVIEW_H, COLS = 480, 270, 3
+    # Grid sized to the actual camera count rather than a fixed 3 columns, so
+    # no blank padding tiles appear. With the rig now at 4 cameras (2 Basler +
+    # 1 Lucid + 1 RGBD) a fixed 3-column layout padded to 6 tiles, i.e. two
+    # dead black panels. Near-square: 1->1x1, 2->2x1, 4->2x2 exactly,
+    # 5->3x2 (one blank), 6->3x2 exact.
+    import math
+    PREVIEW_W, PREVIEW_H = 480, 270
     EXP_STEP = 0.20
+
+    N    = max(len(workers), 1)
+    COLS = math.ceil(math.sqrt(N))
+    ROWS = math.ceil(N / COLS)
+    # Title reflects the actual camera count — the rig defaults to 4 now, and a
+    # window labelled "5-Camera" while recording 4 is a small but real way to
+    # mislead someone checking a run at a glance.
+    WIN = f'{len(workers)}-Camera Recording  |  Q=stop  +/-=Lucid exposure'
 
     lucid_worker = next((w for w in workers if isinstance(w, LucidWorker)), None)
     last_good    = {w.name: None for w in workers}
@@ -695,10 +854,10 @@ def display_loop(workers, duration, verbose):
     while True:
         if all(w.start_time is not None or w.error is not None for w in workers):
             break
-        waiting = np.full((PREVIEW_H * 2, PREVIEW_W * COLS, 3), 30, dtype=np.uint8)
+        waiting = np.full((PREVIEW_H * ROWS, PREVIEW_W * COLS, 3), 30, dtype=np.uint8)
         cv2.putText(waiting, "Waiting for cameras...", (10, PREVIEW_H),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
-        cv2.imshow('5-Camera Recording  |  Q=stop  +/-=Lucid exposure', waiting)
+        cv2.imshow(WIN, waiting)
         if cv2.waitKey(50) & 0xFF == ord('q'):
             for w in workers:
                 w.stop()
@@ -752,7 +911,7 @@ def display_loop(workers, duration, verbose):
         rows = [np.hstack(tiles[i:i + COLS]) for i in range(0, len(tiles), COLS)]
         grid = np.vstack(rows)
 
-        cv2.imshow('5-Camera Recording  |  Q=stop  +/-=Lucid exposure', grid)
+        cv2.imshow(WIN, grid)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
@@ -773,7 +932,7 @@ def display_loop(workers, duration, verbose):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 def record_all_cameras(duration_seconds, width, height, fps, verbose,
-                       max_realsense=2, depth_width=None, depth_height=None,
+                       max_realsense=1, depth_width=None, depth_height=None,
                        lucid_packet_size=1400, lucid_packet_delay=40000):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     workers   = []
@@ -938,12 +1097,25 @@ def record_all_cameras(duration_seconds, width, height, fps, verbose,
             "max_pacing_drift_s": (round(drift, 4) if drift is not None else None),
             "error": w.error,
         }
+        meta["cameras"][w.name]["timestamp_domain"] = w.ts_domain
+        meta["cameras"][w.name]["device_timestamps_present"] = bool(
+            [d for d in w.device_times if d is not None])
         if ts:
             ts_file = f"timestamps_{w.name}_{timestamp}.csv"
+            dev = w.device_times
             with open(ts_file, "w") as f:
-                f.write("frame_index,unix_time,seconds_from_start\n")
+                f.write("frame_index,host_unix_time,host_seconds_from_start,"
+                        "device_timestamp,device_delta\n")
+                d0 = next((d for d in dev if d is not None), None)
                 for i, t in enumerate(ts):
-                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f}\n")
+                    d = dev[i] if i < len(dev) else None
+                    # device_delta is relative to this camera's own first frame,
+                    # which makes the column readable without knowing the tick
+                    # rate or epoch. Absolute device_timestamp is kept verbatim
+                    # so nothing is lost to the conversion.
+                    dd = "" if (d is None or d0 is None) else f"{d - d0}"
+                    ds = "" if d is None else f"{d}"
+                    f.write(f"{i},{t:.6f},{t - ts[0]:.6f},{ds},{dd}\n")
             meta["cameras"][w.name]["timestamps_file"] = ts_file
 
     meta_file = f"recording_metadata_{timestamp}.json"
@@ -974,11 +1146,14 @@ if __name__ == '__main__':
     ap.add_argument('--width', type=int, default=1280)
     ap.add_argument('--height', type=int, default=720)
     ap.add_argument('--verbose', action='store_true', help="Print per-camera actual FPS every 5s")
-    ap.add_argument('--max-realsense', type=int, default=2, choices=(0, 1, 2),
-                    help="How many RealSense cameras to use (default 2). Drop to 1 "
-                         "or 0 if one of them is in a bad USB state and crashes the "
-                         "process — a libusb SIGSEGV cannot be caught and would "
-                         "otherwise take the Basler/Lucid cameras down too.")
+    ap.add_argument('--max-realsense', type=int, default=1, choices=(0, 1, 2),
+                    help="How many RealSense cameras to use (default 1, matching the "
+                         "current 4-camera rig: 2 Basler + 1 Lucid + 1 RGBD). Raise to "
+                         "2 only if a second unit is refitted — note the two D435s "
+                         "interfere at device-open time on a shared USB controller "
+                         "(see CAPTURE_INSTRUCTIONS.md issue 2), and a wedged unit can "
+                         "SIGSEGV inside libusb, which cannot be caught from Python "
+                         "and takes the Basler/Lucid cameras down with it.")
     ap.add_argument('--depth-width', type=int, default=None,
                     help="Depth STREAM width (default: same as --width). Independent "
                          "of --width because depth is aligned to the colour stream, so "
