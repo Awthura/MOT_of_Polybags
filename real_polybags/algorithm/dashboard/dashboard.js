@@ -22,6 +22,8 @@ const statusEl = document.getElementById("status");
 const state = {
   cfg: null, mapImg: null,
   raw: new Map(), fused: new Map(),
+  counts: null,                     // latest line-crossing counts from the streamer
+  playback: null,                   // { paused, loop, pos_s, duration_s }
   ttlMs: 1000,
   view: { scale: 1, x: 0, y: 0 },   // shared across both panels
   fitted: false, drag: null,
@@ -108,6 +110,7 @@ function render() {
       ctx.drawImage(state.mapImg, v.x, v.y,
         state.mapImg.width * v.scale, state.mapImg.height * v.scale);
     }
+    drawCountLines(ctx, p.key);
     let live = 0;
     for (const [k, t] of p.data) {
       if (now - t.rx > state.ttlMs) { p.data.delete(k); continue; }
@@ -115,9 +118,36 @@ function render() {
       drawTrack(ctx, t, p.key);
     }
     const noun = p.key === "fused" ? "object" : "detection";
-    p.countEl.textContent = `${live} ${noun}${live === 1 ? "" : "s"}`;
+    const lines = state.counts && state.counts.lines;
+    let passed = "";
+    if (lines) passed = lines.map(l =>
+      `<div class="passed">⎯ ${l.name}: <b>≈${l.flux_max}</b>` +
+      `<span class="ref"> (cross ${l.crossing_max})</span></div>`
+    ).join("");
+    p.countEl.innerHTML =
+      `<div>${live} ${noun}${live === 1 ? "" : "s"} now</div>` + passed;
   }
   requestAnimationFrame(render);
+}
+
+// Draw each counting line (world y, spanning its x-segment) with its running count.
+function drawCountLines(ctx, key) {
+  const cls = (state.cfg && state.cfg.count_lines) || [];
+  const lines = (state.counts && state.counts.lines) || [];
+  ctx.save();
+  for (const cl of cls) {
+    const xs = cl.x_mm || [-290, 290];
+    const [ax, ay] = mapToScreen(...worldToMap(xs[0], cl.y_mm));
+    const [bx, by] = mapToScreen(...worldToMap(xs[1], cl.y_mm));
+    ctx.strokeStyle = "#35d07f"; ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.setLineDash([]);
+    const cnt = lines.find(l => l.name === cl.name);
+    const n = cnt ? cnt.flux_max : "";
+    ctx.fillStyle = "#7be6a6"; ctx.font = "bold 12px monospace";
+    ctx.fillText(`⎯ ${cl.name}: ≈${n}`, Math.min(ax, bx) + 3, Math.min(ay, by) - 4);
+  }
+  ctx.restore();
 }
 
 function drawTrack(ctx, t, key) {
@@ -144,6 +174,33 @@ function drawTrack(ctx, t, key) {
   ctx.fillText(label, sx + h + 2, sy - h - 2);
 }
 
+// ── playback controls (pause / loop) ─────────────────────────────────────────
+async function control(action) {
+  try {
+    const s = await (await fetch(`/api/control?action=${action}`,
+      { method: "POST" })).json();
+    reflectPlayback(s);
+  } catch (e) { /* streamer busy or offline; ignore */ }
+}
+function reflectPlayback(s) {
+  if (!s) return;
+  state.playback = s;
+  const bp = document.getElementById("btn-play");
+  const bl = document.getElementById("btn-loop");
+  if (bp) bp.textContent = s.paused ? "▶ Play" : "⏸ Pause";
+  if (bl) {
+    bl.textContent = s.loop ? "🔁 Loop: on" : "➡ Loop: off";
+    bl.classList.toggle("off", !s.loop);
+  }
+}
+function wireControls() {
+  const bp = document.getElementById("btn-play");
+  const bl = document.getElementById("btn-loop");
+  if (bp) bp.onclick = () => control("toggle");
+  if (bl) bl.onclick = () =>
+    control(state.playback && state.playback.loop ? "loop_off" : "loop_on");
+}
+
 // ── MQTT (both topics) ───────────────────────────────────────────────────────
 function connectMqtt() {
   const m = state.cfg.mqtt;
@@ -164,6 +221,13 @@ function connectMqtt() {
     let msg;
     try { msg = JSON.parse(payload.toString()); } catch { return; }
     const rx = Date.now();
+    if (msg.counts) state.counts = msg.counts;   // same object on both topics
+    if (msg.playback) {                          // keep buttons in sync (e.g. auto-pause at end)
+      const p = state.playback;
+      if (!p || p.paused !== msg.playback.paused || p.loop !== msg.playback.loop)
+        reflectPlayback(msg.playback);
+      else state.playback = msg.playback;
+    }
     if (topic === fusedTopic) {
       for (const p of (msg.polybags || []))
         state.fused.set(p.id, { id: p.id, x: p.x_mm, y: p.y_mm,
@@ -181,11 +245,12 @@ function connectMqtt() {
 function buildLegends() {
   PANELS[0].legendEl.innerHTML = state.cfg.cameras.map((c, i) =>
     `<div class="row"><span class="dot" style="background:${colorFor(c.name, i)}"></span>${c.name}${c.metric ? "" : " · homog."}</div>`
-  ).join("") + `<div class="hint">drag/scroll either map to pan/zoom both</div>`;
+  ).join("") + `<div class="hint">⎯ = max single-camera count</div>`;
+  const reid = state.cfg.reid_enabled;
   PANELS[1].legendEl.innerHTML =
-    `<div class="row"><span class="dot" style="background:${FUSED_COLOR}"></span>fused object · global ID (n)</div>` +
-    `<div class="row"><span class="dot" style="background:${FUSED_COLOR};outline:2px solid #fff;outline-offset:-2px"></span><b>id*</b> · re-ID'd across the gap</div>` +
-    `<div class="hint">deduped across cameras + re-ID across the gap</div>`;
+    `<div class="row"><span class="dot" style="background:${FUSED_COLOR}"></span>fused object (n cams)</div>` +
+    `<div class="row"><span class="dot" style="background:#35d07f"></span>count line ⎯</div>` +
+    `<div class="hint">deduped${reid ? " + re-ID" : " · re-ID off"}</div>`;
 }
 
 // ── boot ─────────────────────────────────────────────────────────────────────
@@ -194,6 +259,8 @@ async function boot() {
   state.ttlMs = (state.cfg.mqtt.track_ttl_s || 1.0) * 1000;
   document.getElementById("hdr-sub").textContent =
     `conveyor · session ${state.cfg.session} · raw vs fused`;
+  wireControls();
+  reflectPlayback(state.cfg.playback);
   buildLegends();
 
   const img = new Image();

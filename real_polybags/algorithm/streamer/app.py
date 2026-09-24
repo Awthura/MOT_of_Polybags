@@ -26,7 +26,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from flask import Flask, Response, jsonify, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 ALGO_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ALGO_DIR / "core"))
@@ -34,6 +34,7 @@ sys.path.insert(0, str(ALGO_DIR / "core"))
 import appconfig            # noqa: E402
 import calib                # noqa: E402
 import georef               # noqa: E402
+from counter import LineCounter, FluxCounter, SpeedEstimator   # noqa: E402
 from detector import Detector, draw_detections   # noqa: E402
 from fusion import FusionTracker                  # noqa: E402
 from publisher import Publisher                   # noqa: E402
@@ -219,7 +220,14 @@ class Engine:
                 st.set_times(np.arange(st.count) * self.duration / max(st.count, 1))
             self.sync_mode = "normalized"
         print(f"[engine] sync mode: {self.sync_mode}  (loop {self.duration:.1f}s)")
-        self._t_start = time.time()
+        # Pausable media clock: `_media_t` is the position in the loop (seconds),
+        # advanced by real time * speed each tick only while not paused. Playback
+        # loops at `duration` unless looping is turned off (then it stops at the
+        # end). Controlled live via /api/control.
+        self._media_t = 0.0
+        self._paused = False
+        self._loop_enabled = bool(cfg["playback"].get("loop", True))
+        self._last_wall = None
 
         self.pub = Publisher(m["host"], m["port"], m["topic"])
         self.pub.connect()
@@ -229,13 +237,42 @@ class Engine:
         self.fusion_enabled = bool(fz.get("enabled", True))
         self.fused_topic = m.get("fused_topic", m["topic"] + "_fused")
         self.fusion = FusionTracker(**{k: fz[k] for k in (
-            "dedup_gate_mm", "assoc_gate_mm", "set2_entry_y_mm", "min_hits",
-            "active_ttl_s", "departed_ttl_s", "default_belt_speed_mm_s",
+            "reid_enabled", "dedup_gate_mm", "assoc_gate_mm", "set2_entry_y_mm",
+            "min_hits", "active_ttl_s", "departed_ttl_s", "default_belt_speed_mm_s",
             "transit_tol", "transit_slack_s") if k in fz})
+
+        # Line counters: bags crossing a line in +Y are counted once, on the fused
+        # stream and per raw camera. Two lines (see config): "exit" (lucid, the
+        # reliable throughput count) and "overlap" (y=0, the fusion dedup check —
+        # fused should match the MAX per-camera count). Back-compat: a single
+        # `count_line` still works.
+        lines_cfg = cfg.get("count_lines")
+        if not lines_cfg:
+            cl = cfg.get("count_line") or {"y_mm": 0.0, "x_mm": [-1e9, 1e9]}
+            lines_cfg = [{"name": "line", **cl}]
+        self.count_lines = [{"name": l.get("name", f"line{i}"),
+                             "y_mm": float(l.get("y_mm", 0.0)),
+                             "x_mm": list(l.get("x_mm", [-1e9, 1e9]))}
+                            for i, l in enumerate(lines_cfg)]
+        # per line: crossing counters (reference) + FLUX counters (primary, robust
+        # to dense flow) per raw camera; plus an online belt-speed estimate per
+        # camera. Crossing-per-track counting collapses on this dense, fast belt
+        # (12 to 21 bags per frame), so the reported count is the flux estimate.
+        fx = cfg.get("count_flux") or {}
+        self._flux_band = float(fx.get("band_mm", 200.0))
+        default_speed = float(fx.get("belt_speed_mm_s", 0.0))   # 0 = estimate live
+        self._counters = [{"cams": {n: LineCounter(l["y_mm"], tuple(l["x_mm"]))
+                                    for n in self.cameras}}
+                          for l in self.count_lines]
+        self._flux = [{n: FluxCounter(l["y_mm"], self._flux_band, tuple(l["x_mm"]))
+                       for n in self.cameras} for l in self.count_lines]
+        self._speed = {n: SpeedEstimator(default=default_speed) for n in self.cameras}
+        self._last_tick_t = None
 
         self._latest: dict[str, bytes] = {}   # latest annotated JPEG per camera
         self._polybags: list[dict] = []       # latest RAW per-camera detections
         self._fused: list[dict] = []          # latest FUSED objects (global IDs)
+        self._counts: dict = {}               # latest line-crossing counts
         self._lock = threading.Lock()
         self._running = False
         self._tick = 0
@@ -256,8 +293,26 @@ class Engine:
 
     def _clock(self, name: str) -> float:
         """This camera's position on the shared timeline right now (seconds)."""
-        base = (time.time() - self._t_start) * self.speed
-        return (base + self.sync_offset.get(name, 0.0)) % self.duration
+        return (self._media_t + self.sync_offset.get(name, 0.0)) % self.duration
+
+    # ── playback controls (live, via /api/control) ───────────────────────────
+    def set_paused(self, p: bool) -> None:
+        self._paused = bool(p)
+
+    def toggle_pause(self) -> bool:
+        self._paused = not self._paused
+        return self._paused
+
+    def set_loop(self, enabled: bool) -> None:
+        self._loop_enabled = bool(enabled)
+        # if looping is turned back on after stopping at the end, resume from start
+        if enabled and self._paused and self._media_t >= self.duration - 1e-6:
+            self._media_t = 0.0
+            self._paused = False
+
+    def state(self) -> dict:
+        return {"paused": self._paused, "loop": self._loop_enabled,
+                "pos_s": round(self._media_t, 2), "duration_s": round(self.duration, 2)}
 
     def _publish_loop(self):
         interval = 1.0 / self.publish_hz
@@ -265,12 +320,15 @@ class Engine:
             with self._lock:
                 polybags = list(self._polybags)
                 fused = list(self._fused)
+                counts = dict(self._counts)
             t_ms = int(time.time() * 1000)
             self.pub.publish({"t": t_ms, "frame": self._tick,
-                              "session": self.session, "polybags": polybags})
+                              "session": self.session, "polybags": polybags,
+                              "counts": counts, "playback": self.state()})
             if self.fusion_enabled:
                 self.pub.publish({"t": t_ms, "frame": self._tick,
-                                  "session": self.session, "polybags": fused},
+                                  "session": self.session, "polybags": fused,
+                                  "counts": counts},
                                  topic=self.fused_topic)
             time.sleep(interval)
 
@@ -284,12 +342,32 @@ class Engine:
     def _loop(self):
         interval = 1.0 / self.fps
         while self._running:
-            t0 = time.time()
+            now = time.time()
+            # Advance the media clock by real elapsed time while playing; freeze it
+            # while paused; wrap at the loop end, or stop there if looping is off.
+            if self._last_wall is not None and not self._paused:
+                self._media_t += (now - self._last_wall) * self.speed
+                if self._media_t >= self.duration:
+                    if self._loop_enabled:
+                        self._media_t %= self.duration
+                    else:
+                        self._media_t = self.duration
+                        self._paused = True          # stop at the end
+            self._last_wall = now
+            if self._paused:
+                self._last_tick_t = None             # no flux jump on resume
+                time.sleep(interval)
+                continue
+
+            t0 = now
+            dt_tick = 0.0 if self._last_tick_t is None else (t0 - self._last_tick_t)
+            self._last_tick_t = t0
             polybags = []
             for name, st in self.streams.items():
                 frame, _idx = st.frame_at_time(self._clock(name))
                 if frame is None:
                     continue
+                cam_objs = []
                 boxes = self.detector.detect(frame)
                 refs = [b.center_px() if self.ref_point == "center" else b.foot_px()
                         for b in boxes]
@@ -311,22 +389,42 @@ class Engine:
                 for (tid, x, y, c), (b, (rx, ry), w) in zip(tagged, keep):
                     cv2.putText(vis, f"#{tid}", (int(rx) + 6, int(ry) - 6),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    polybags.append({
-                        "cam": name, "id": int(tid),
-                        "x_mm": round(float(x), 1), "y_mm": round(float(y), 1),
-                        "conf": round(float(c), 2), "metric": st.cam.metric})
+                    obj = {"cam": name, "id": int(tid),
+                           "x_mm": round(float(x), 1), "y_mm": round(float(y), 1),
+                           "conf": round(float(c), 2), "metric": st.cam.metric}
+                    polybags.append(obj)
+                    cam_objs.append(obj)
+                # Per-camera counts (raw plane): crossing (reference) + flux
+                # (primary), plus the online belt-speed estimate for this camera.
+                self._speed[name].update(cam_objs, t0)
+                for li, lc in enumerate(self._counters):
+                    lc["cams"][name].update(cam_objs)
+                    self._flux[li][name].update(cam_objs, dt_tick)
                 ok_enc, buf = cv2.imencode(".jpg", vis, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok_enc:
                     with self._lock:
                         self._latest[name] = buf.tobytes()
 
-            # Fuse this tick's raw detections into global objects (dedup + re-ID).
+            # Fuse this tick's raw detections into global objects (dedup [+ re-ID]).
             fused = self.fusion.update(polybags, t0) if self.fusion_enabled else []
+            speeds = {n: self._speed[n].speed() for n in self.cameras}
+            counts = {"lines": []}                    # one entry per counting line
+            for li, line in enumerate(self.count_lines):
+                cross = {n: c.count for n, c in self._counters[li]["cams"].items()}
+                flux = {n: round(self._flux[li][n].count(speeds[n]), 0)
+                        for n in self.cameras}
+                counts["lines"].append({
+                    "name": line["name"], "y_mm": line["y_mm"], "x_mm": line["x_mm"],
+                    "band_mm": self._flux_band,
+                    "flux": flux, "flux_max": round(max(flux.values(), default=0.0)),
+                    "crossing": cross, "crossing_max": max(cross.values(), default=0),
+                    "speed_mm_s": {n: round(v) for n, v in speeds.items()}})
             # Hand both to the steady publisher; do not publish here (that would
             # inherit this loop's irregular timing).
             with self._lock:
                 self._polybags = polybags
                 self._fused = fused
+                self._counts = counts
             self._tick += 1
             dt = time.time() - t0
             if dt < interval:
@@ -401,11 +499,30 @@ def create_app(cfg) -> Flask:
                         for n, s in engine.streams.items()],
             "georef": engine.georef,
             "map_url": "/assets/map.png",
+            "count_lines": engine.count_lines,
+            "reid_enabled": engine.fusion.reid_enabled,
+            "playback": engine.state(),
             "mqtt": {"ws_port": m["ws_port"], "topic": m["topic"],
                      "fused_topic": engine.fused_topic,
                      "fusion_enabled": engine.fusion_enabled,
                      "track_ttl_s": m["track_ttl_s"], "host": m["host"]},
         })
+
+    @app.route("/api/control", methods=["POST", "GET"])
+    def api_control():
+        # actions: play | pause | toggle | loop_on | loop_off
+        action = (request.args.get("action") or "").lower()
+        if action == "pause":
+            engine.set_paused(True)
+        elif action == "play":
+            engine.set_paused(False)
+        elif action == "toggle":
+            engine.toggle_pause()
+        elif action == "loop_on":
+            engine.set_loop(True)
+        elif action == "loop_off":
+            engine.set_loop(False)
+        return jsonify(engine.state())
 
     @app.route("/assets/map.png")
     def asset_map():

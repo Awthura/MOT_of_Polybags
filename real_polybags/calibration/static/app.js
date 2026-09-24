@@ -305,7 +305,9 @@ function showIntrinsicsResult(r, { factory = false } = {}) {
 $('btn-calibrate').addEventListener('click', async () => {
   $('btn-calibrate').disabled = true;
   toast('Calibrating…');
-  const r = await post('/api/calibrate');
+  const r = await post('/api/calibrate', {
+    fix_principal_point: $('chk-fix-pp')?.checked || false,
+  });
   $('btn-calibrate').disabled = false;
   if (!r.ok) { toast(r.error, 5000); return; }
   showIntrinsicsResult(r, { factory: false });

@@ -72,6 +72,12 @@ class IntrinsicResult:
     tvecs: list[np.ndarray] = field(default_factory=list)
     coverage: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # True when cx,cy were held at the image centre rather than fitted — a
+    # deliberate salvage for captures whose board never covered part of the
+    # frame, where the free fit lets the principal point drift into a wrong
+    # place (and drags fx with it). Recorded so the result is never mistaken
+    # for a fully-measured one.
+    principal_point_fixed: bool = False
 
     @property
     def fx(self) -> float: return float(self.K[0, 0])
@@ -168,8 +174,18 @@ def analyse_coverage(dets: list[Detection], image_size: tuple[int, int],
 # ── Calibration ──────────────────────────────────────────────────────────────
 
 def calibrate(dets: list[Detection], camera: str = "camera",
-              fix_aspect: bool = False) -> IntrinsicResult:
-    """Solve for K and D from a set of detections."""
+              fix_aspect: bool = False,
+              fix_principal_point: bool = False) -> IntrinsicResult:
+    """Solve for K and D from a set of detections.
+
+    `fix_principal_point` holds cx,cy at the image centre instead of fitting
+    them. Use it only when the board never reached part of the frame: a free
+    fit then spends the principal point as a fudge parameter and it drifts far
+    off centre, dragging fx into a ~2x ambiguity (see `assess`). Anchoring it
+    breaks that coupling. Valid when the stream is a *centred* crop or downscale
+    of the sensor — an off-centre crop has a genuinely off-centre optical axis
+    and this would be wrong. The result is flagged `principal_point_fixed`.
+    """
     if len(dets) < MIN_VIEWS:
         raise ValueError(f"need at least {MIN_VIEWS} usable views, got {len(dets)}")
     sizes = {d.image_size for d in dets}
@@ -181,8 +197,18 @@ def calibrate(dets: list[Detection], camera: str = "camera",
     img = [d.image_points for d in dets]
 
     flags = cv2.CALIB_FIX_ASPECT_RATIO if fix_aspect else 0
+    K_init = None
+    if fix_principal_point:
+        w, h = image_size
+        # A rough focal guess so USE_INTRINSIC_GUESS starts from a sane K; only
+        # the principal point is actually held, fx/fy are still solved.
+        f0 = 0.9 * max(w, h)
+        K_init = np.array([[f0, 0, w / 2.0],
+                           [0, f0, h / 2.0],
+                           [0, 0, 1.0]], dtype=np.float64)
+        flags |= cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_USE_INTRINSIC_GUESS
     rms, K, D, rvecs, tvecs = cv2.calibrateCamera(
-        obj, img, image_size, None, None, flags=flags)
+        obj, img, image_size, K_init, None, flags=flags)
 
     # Per-view error, so a single bad shot is visible instead of averaged away.
     per_view = []
@@ -196,7 +222,7 @@ def calibrate(dets: list[Detection], camera: str = "camera",
         camera=camera, image_size=image_size, K=K, D=D, rms=float(rms),
         per_view_error=per_view, view_sources=[d.source for d in dets],
         rvecs=[np.asarray(r) for r in rvecs], tvecs=[np.asarray(t) for t in tvecs],
-        coverage=coverage,
+        coverage=coverage, principal_point_fixed=fix_principal_point,
     )
     result.warnings = assess(result)
     return result
@@ -205,6 +231,23 @@ def calibrate(dets: list[Detection], camera: str = "camera",
 def assess(res: IntrinsicResult) -> list[str]:
     """Problems worth surfacing. A low RMS alone does not mean a good result."""
     w = []
+    if res.principal_point_fixed:
+        w.append("SALVAGE: principal point held at the image centre, not measured "
+                 "— done because the board did not cover the whole frame, so a free "
+                 "fit could not be trusted to place it. fx and the distortion terms "
+                 "are therefore only partially constrained; good for coarse "
+                 "undistortion and rough geometry, not precision metric work. A "
+                 "re-record with full-frame coverage is the real fix.")
+    else:
+        cx, cy = res.cx, res.cy
+        W, H = res.image_size
+        off = max(abs(cx - W / 2) / W, abs(cy - H / 2) / H)
+        if off > 0.15:
+            w.append(f"principal point ({cx:.0f}, {cy:.0f}) is {off*100:.0f}% off the "
+                     f"image centre ({W/2:.0f}, {H/2:.0f}) — for a centred crop/downscale "
+                     f"it should be near centre. Often a symptom of an fx-principal-point "
+                     f"degeneracy from a board that never reached part of the frame; "
+                     f"consider re-solving with fix_principal_point=True.")
     if res.rms > 1.0:
         w.append(f"high reprojection error ({res.rms:.2f} px) — check for blurred "
                  f"or mis-detected views")

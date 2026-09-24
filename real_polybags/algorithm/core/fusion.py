@@ -24,6 +24,14 @@ single set of world objects with **persistent global IDs**:
 
 Deliberately simple (greedy dedup/association, ordered queue, no Kalman): the
 belt is slow and one-directional.
+
+**Cross-gap re-ID is OFF by default** (`reid_enabled=False`). Carrying an ID
+across the blind gap needs a real re-ID method (objects vanish for ~1.7s and
+reappear), which is deferred. With it off, fusion does only what it can do
+robustly: dedup overlapping cameras and track objects *locally* with unique
+IDs. That is all the line counter needs — each bag crosses a single counting
+line once, within one camera region, so no cross-gap identity is required. The
+re-ID code below stays in place, dormant, for when we return to it.
 """
 
 from __future__ import annotations
@@ -50,10 +58,11 @@ class _Track:
 class FusionTracker:
     dedup_gate_mm: float = 130.0      # merge same-bag detections across cameras
     assoc_gate_mm: float = 300.0      # match a detection to an existing track
-    set2_entry_y_mm: float = 900.0    # y>=this = downstream (lucid); below = upstream
-    min_hits: int = 2                 # a track must be seen >= this to count as real
-    active_ttl_s: float = 1.2         # retire (and, if upstream, depart) after this gap
-    departed_ttl_s: float = 90.0      # keep a departed bag re-ID-able this long
+    active_ttl_s: float = 1.2         # retire a track after this gap with no observation
+    reid_enabled: bool = False        # carry IDs across the blind gap (deferred; see docstring)
+    set2_entry_y_mm: float = 900.0    # [re-ID only] y>=this = downstream (lucid); below = upstream
+    min_hits: int = 2                 # [re-ID only] a track must be seen >= this to depart
+    departed_ttl_s: float = 90.0      # [re-ID only] keep a departed bag re-ID-able this long
 
     # belt-speed transit-time gate (see module docstring)
     default_belt_speed_mm_s: float = 0.0   # fallback until enough motion is measured
@@ -80,11 +89,19 @@ class FusionTracker:
                 continue
             members = [pts[i]]
             used[i] = True
+            seed_cams = {pts[i][4]}          # cameras already merged into this cluster
             for j in order:
-                if not used[j] and (pts[j][0] - pts[i][0]) ** 2 + \
-                        (pts[j][1] - pts[i][1]) ** 2 <= g2:
+                # Merge ONLY across DIFFERENT cameras — a cross-camera view of the
+                # same bag. Never merge two detections from the SAME camera: the
+                # per-camera tracker already established those are distinct objects,
+                # so collapsing them (e.g. two bags in adjacent lanes closer than
+                # the gate) would silently drop a bag from the count.
+                if (not used[j] and pts[j][4] not in seed_cams
+                        and (pts[j][0] - pts[i][0]) ** 2
+                        + (pts[j][1] - pts[i][1]) ** 2 <= g2):
                     members.append(pts[j])
                     used[j] = True
+                    seed_cams.add(pts[j][4])
             w = sum(m[2] for m in members) or 1.0
             obs.append({"x": sum(m[0] * m[2] for m in members) / w,
                         "y": sum(m[1] * m[2] for m in members) / w,
@@ -170,14 +187,15 @@ class FusionTracker:
             tid = assigned.get(oi)
             if tid is not None:                      # continues an existing track
                 prev = self._active[tid]
-                self._add_speed_sample(prev, o, t)   # learn belt speed from motion
+                if self.reid_enabled:
+                    self._add_speed_sample(prev, o, t)   # learn belt speed from motion
                 emit(tid, o, prev.reid, prev.hits + 1, prev.origin)
-            elif o["y"] >= self.set2_entry_y_mm:     # new downstream obs -> re-ID
-                arrivals.append((oi, o))
-            else:                                    # new upstream bag
+            elif self.reid_enabled and o["y"] >= self.set2_entry_y_mm:
+                arrivals.append((oi, o))             # new downstream obs -> re-ID
+            else:                                    # new object -> fresh local ID
                 emit(self._new_id(), o, False, 1, None)
 
-        # 2. FIFO re-ID for the downstream arrivals
+        # 2. FIFO re-ID for the downstream arrivals (deferred feature, off by default)
         if arrivals:
             match = self._fifo_reid(arrivals, t)
             for oi, o in arrivals:
@@ -187,14 +205,16 @@ class FusionTracker:
                 else:                                # no queued bag -> new
                     emit(self._new_id(), o, False, 1, None)
 
-        # 3. retire tracks not seen this tick; confirmed upstream ones "depart"
+        # 3. retire tracks not seen this tick; when re-ID is on, confirmed
+        #    upstream ones "depart" into the re-ID queue.
         departing = []
         for tid in list(self._active):
             if tid in updated:
                 continue
             tr = self._active[tid]
             if t - tr.last_t > self.active_ttl_s:
-                if tr.hits >= self.min_hits and tr.y < self.set2_entry_y_mm:
+                if (self.reid_enabled and tr.hits >= self.min_hits
+                        and tr.y < self.set2_entry_y_mm):
                     departing.append(tr)
                 del self._active[tid]
         # queue departures in belt order (further downstream = left first)

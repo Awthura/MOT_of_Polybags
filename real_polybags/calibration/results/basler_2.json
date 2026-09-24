@@ -1,24 +1,157 @@
 {
   "schema_version": 1,
   "camera": "basler_2",
-  "created_utc": "2026-07-31T09:29:52+00:00",
-  "source": "basler",
-  "notes": "Reconstructed from a pasted console report, not saved live through the app \u2014 per-view error list, exact (unrounded) tilt figures, and device serial were not available and are not stored. RESOLUTION WARNING: this is the camera's full sensor size, not the 1280x720 the rest of this pipeline documents recording at \u2014 confirm which is intended before recording extrinsics footage, or the resolution guard will refuse to solve a pose against a 1280x720 session. Device serial asserted from sensor geometry, not read live: 1920x1200 uniquely identifies the a2A1920-51gcBAS among the two Baslers enumerated on this rig on 2026-07-31.",
+  "created_utc": "2026-08-07T08:43:44+00:00",
+  "method": "homography_points",
+  "source": "calib3d (3D map, rectified frame)",
+  "notes": "",
+  "extrinsics": {
+    "H_image_to_belt": [
+      [
+        -0.3339267152096678,
+        0.0038548824991507815,
+        227.16879660882526
+      ],
+      [
+        -0.001220482258064205,
+        0.3549674950405765,
+        -189.61646796391986
+      ],
+      [
+        -4.0210470311743146e-05,
+        -0.0001308612781783527,
+        1.0
+      ]
+    ],
+    "H_belt_to_image": [
+      [
+        -3.0874445778109707,
+        0.3140474978092802,
+        760.9196466452635
+      ],
+      [
+        -0.08271472410737522,
+        3.0373027105744295,
+        594.7128164536668
+      ],
+      [
+        -0.00013497175305608134,
+        0.00041009331250748245,
+        1.1084218161712265
+      ]
+    ],
+    "image_size": [
+      1280,
+      720
+    ],
+    "rms_mm": 4.364529651472304e-06,
+    "max_error_mm": 5.4342136535342456e-06,
+    "n_points": 4,
+    "n_inliers": 4,
+    "used_intrinsics": true,
+    "warnings": [
+      "exactly 4 point pairs \u2014 the fit passes through all of them exactly, so the residuals below are 0 by construction and prove nothing. Add a 5th point to get a real error estimate"
+    ],
+    "rvec": [
+      -0.007546846959137148,
+      2.996723978610371,
+      0.5059815517988594
+    ],
+    "tvec_mm": [
+      -25.842724571158303,
+      53.91374171415159,
+      894.063812395383
+    ],
+    "R": [
+      [
+        -0.9947449738702403,
+        -0.021910003566493627,
+        0.10001194280490278
+      ],
+      [
+        0.012141495303968367,
+        0.94469658672621,
+        0.32772083107369193
+      ],
+      [
+        -0.10166130557728748,
+        0.32721294407703955,
+        -0.9394661612728569
+      ]
+    ],
+    "camera_position_mm": [
+      64.53018061740723,
+      -344.0475942091547,
+      824.8586226149456
+    ],
+    "height_above_belt_mm": 824.8586226149456
+  },
+  "correspondences": {
+    "image_points_px": [
+      [
+        297.44966442953023,
+        285.38702023909394
+      ],
+      [
+        1046.979865771812,
+        291.8299732592282
+      ],
+      [
+        353.28859060402687,
+        702.0313155411073
+      ],
+      [
+        984.6979865771813,
+        708.4742685612416
+      ]
+    ],
+    "world_points_mm": [
+      [
+        135.63000252170502,
+        -93.27548727373907
+      ],
+      [
+        -131.91182379906905,
+        -94.925593784061
+      ],
+      [
+        125.18107261934297,
+        66.16955929473744
+      ],
+      [
+        -114.00009673326771,
+        69.9176502457448
+      ]
+    ],
+    "residuals_mm": [
+      3.463075641431776e-06,
+      5.4342136535342456e-06,
+      4.99498430441509e-06,
+      3.1181785039401766e-06
+    ],
+    "inliers": [
+      1,
+      1,
+      1,
+      1
+    ]
+  },
+  "limitations": [],
   "intrinsics": {
     "image_size": [
-      1920,
-      1200
+      1280,
+      720
     ],
     "K": [
       [
-        1362.64,
+        2459.9116676264102,
         0.0,
-        953.7
+        756.43009771538
       ],
       [
         0.0,
-        1365.24,
-        592.34
+        2461.176048450744,
+        388.19098429836396
       ],
       [
         0.0,
@@ -27,32 +160,84 @@
       ]
     ],
     "D": [
-      -0.3262,
-      0.20499,
-      -0.00186,
-      0.00153,
-      -0.08297
+      -0.2281238786171985,
+      0.7656103377979023,
+      0.0026884515345596766,
+      -0.0027613300666146576,
+      0.5074268232677104
     ],
-    "fx": 1362.64,
-    "fy": 1365.24,
-    "cx": 953.7,
-    "cy": 592.34,
-    "rms_px": 0.423,
+    "fx": 2459.9116676264102,
+    "fy": 2461.176048450744,
+    "cx": 756.43009771538,
+    "cy": 388.19098429836396,
+    "rms_px": 0.5566034556206435,
     "n_views": 25,
-    "per_view_error_px": [],
+    "per_view_error_px": [
+      0.42518819489512766,
+      0.7338860244515535,
+      0.5262281550852905,
+      0.4706941280639246,
+      0.3791635398592117,
+      0.2677579499061044,
+      0.44365587749497143,
+      0.4204895006512065,
+      0.6323849081286607,
+      0.4314910508688717,
+      0.4341331112115125,
+      0.6470649339720405,
+      1.153920939299121,
+      0.4362573776474078,
+      0.4600940489462599,
+      0.5461815552961435,
+      0.47816013509686917,
+      0.5556236394263653,
+      0.8058075950097867,
+      0.3125084837212697,
+      0.2619760253651728,
+      0.2247830307608181,
+      0.3324568720214907,
+      0.6564228978273025,
+      0.28756753521780953
+    ],
     "coverage": {
       "frame_cells_seen": 16,
       "frame_cells_total": 16,
       "frame_fraction": 1.0,
-      "tilt_deg_min": 2.0,
-      "tilt_deg_max": 15.0
+      "grid": [
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "tilt_deg_min": 2.2304246618544186,
+      "tilt_deg_max": 24.647240365897815,
+      "tilt_deg_mean": 7.227759214030816,
+      "n_views_tilted_over_15deg": 1
     },
     "warnings": [
-      "no strongly tilted views \u2014 focal length and distance are nearly degenerate, so fx/fy may be confidently wrong despite a low RMS",
       "fewer than 3 tilted views \u2014 add more off-axis poses"
     ],
-    "method": "board",
-    "worst_view_error_px": 0.757
+    "method": "board"
   },
   "device": {
     "serial": "40121976",

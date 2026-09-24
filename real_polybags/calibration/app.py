@@ -176,6 +176,220 @@ def extrinsics_page():
     return send_from_directory(app.static_folder, "extrinsics.html")
 
 
+@app.route("/calib3d")
+def calib3d_page():
+    """Map-based extrinsics against a 3D .glb of the world (CalibrationHub-style).
+
+    A 3D viewer of the workspace mesh with click-to-pick correspondences, a
+    calibrate step and a validation step — the same point-correspondence solve
+    as /extrinsics, but the map is the real 3D model rather than a flat render.
+    """
+    return send_from_directory(app.static_folder, "calib3d.html")
+
+
+@app.route("/api/dataset/<path:relpath>")
+def api_dataset(relpath):
+    """Serve prepared dataset files (maps, frames, intrinsics) to the browser.
+
+    No-store: these files are regenerated in place (e.g. re-levelling the .glb),
+    and a cached copy would silently show the operator a stale map.
+    """
+    resp = send_from_directory(str(HERE / "datasets"), relpath)
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
+@app.route("/api/datasets")
+def api_datasets_list():
+    """List the prepared datasets and their files, for the picker."""
+    base = HERE / "datasets"
+    out = []
+    if base.is_dir():
+        for d in sorted(p for p in base.iterdir() if p.is_dir()):
+            files = sorted(f.name for f in d.iterdir() if f.is_file())
+            glbs = [f for f in files if f.lower().endswith(".glb")]
+            imgs = [f for f in files if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+            intr = [f for f in files if f.startswith("intrinsics_") and f.endswith(".json")]
+            out.append({"name": d.name, "glb": glbs, "images": imgs, "intrinsics": intr})
+    return jsonify({"datasets": out})
+
+
+_CALIB3D = {}   # camera -> last solve, for the validation step
+
+
+@app.route("/api/calib3d/solve", methods=["POST"])
+def api_calib3d_solve():
+    """Point-correspondence extrinsics for the 3D-map page.
+
+    Takes image points and world-plane points (mm, from 3D picks on the .glb)
+    plus the camera's K/D directly, and runs the same solver /extrinsics uses.
+    Rectified frames come with D=0 (identity undistort); raw frames pass real
+    K/D. No fisheye path — cv2.undistortPoints with D=0 is exact identity.
+    """
+    data = request.get_json(force=True) or {}
+    try:
+        img = np.array(data["image_points"], float).reshape(-1, 2)
+        wld = np.array(data["world_points_mm"], float).reshape(-1, 2)
+        has_K = bool(data.get("K"))
+        K = np.array(data["K"], float) if has_K else None
+        D = np.array(data.get("D") or [0, 0, 0, 0, 0], float).ravel() if has_K else None
+        camera = data.get("camera", "camera")
+        res = corr.solve(img, wld, camera=camera, K=K, D=D,
+                         ransac_reproj_mm=data.get("tolerance_mm"))
+    except (ValueError, KeyError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    img_size = data.get("image_size") or [1280, 720]
+    _CALIB3D[camera] = {"H": res.H_image_to_world, "K": K, "D": D,
+                        "res": res, "image_size": list(img_size)}
+    pos = (res.camera_position_mm.tolist()
+           if res.used_intrinsics and res.rvec is not None else None)
+    return jsonify({
+        "ok": True, "camera": camera,
+        "rms_mm": res.rms_mm, "max_mm": res.max_mm,
+        "residuals_mm": res.residuals_mm.tolist(), "inliers": res.inliers.tolist(),
+        "H_image_to_world": res.H_image_to_world.tolist(),
+        "camera_position_mm": pos,
+        "used_intrinsics": res.used_intrinsics, "warnings": res.warnings})
+
+
+@app.route("/api/calib3d/save", methods=["POST"])
+def api_calib3d_save():
+    """Persist the current calib3d solve as this camera's extrinsics.
+
+    Writes results/<camera>.json via the same builder the other route uses, so
+    everything downstream consumes it identically. The camera's existing
+    intrinsics are carried through untouched — this solves extrinsics only.
+    """
+    import json as _json
+    data = request.get_json(force=True) or {}
+    camera = data.get("camera", "")
+    st = _CALIB3D.get(camera)
+    if st is None or st.get("res") is None:
+        return jsonify({"ok": False, "error": "solve this camera first"}), 400
+    existing = S.results_dir / f"{camera}.json"
+    intr_record = None
+    if existing.exists():
+        try:
+            intr_record = _json.loads(existing.read_text()).get("intrinsics")
+        except (ValueError, OSError):
+            intr_record = None
+    rec = calstore.build_correspondence_record(
+        camera=camera, res=st["res"], image_size=st["image_size"],
+        intr_record=intr_record,
+        source="calib3d (3D map, rectified frame)", notes=data.get("notes", ""))
+    rec = calstore.carry_forward_device(rec, S.results_dir)
+    path = calstore.save(rec, S.results_dir)
+    return jsonify({"ok": True, "path": str(path)})
+
+
+@app.route("/api/calib3d/validate", methods=["POST"])
+def api_calib3d_validate():
+    """Reproject one clicked image point to world mm, against the last solve."""
+    data = request.get_json(force=True) or {}
+    camera = data.get("camera", "camera")
+    st = _CALIB3D.get(camera)
+    if st is None:
+        return jsonify({"ok": False, "error": "solve this camera first"}), 400
+    pt = np.array([[float(data["x"]), float(data["y"])]], np.float32)
+    if st["K"] is not None:
+        pt = cv2.undistortPoints(pt.reshape(-1, 1, 2), st["K"], st["D"],
+                                 P=st["K"]).reshape(-1, 2)
+    w = cv2.perspectiveTransform(pt.reshape(-1, 1, 2).astype(np.float64),
+                                 st["H"]).reshape(-1, 2)[0]
+    return jsonify({"ok": True, "x_mm": float(w[0]), "y_mm": float(w[1])})
+
+
+@app.route("/validate")
+def validate_page():
+    """Multi-camera extrinsics validation against the dashboard map: click a point
+    in any camera frame and see where its saved extrinsics puts it on the belt."""
+    return send_from_directory(app.static_folder, "validate.html")
+
+
+_VAL_COLORS = {"basler_1": "#33e0ff", "basler_2": "#ff5cf0", "lucid": "#ffd23f",
+               "rgbd_1_color": "#8affc1", "rgbd_2_color": "#ff8c42"}
+
+
+@app.route("/api/validate/cameras")
+def api_validate_cameras():
+    """Cameras with a saved extrinsics solve, plus their frame and a fixed colour."""
+    import json as _json
+    ds = HERE / "datasets" / "ams_conveyor"
+    out = []
+    for p in sorted(S.results_dir.glob("*.json")):
+        try:
+            d = _json.loads(p.read_text())
+        except (ValueError, OSError):
+            continue
+        ext = d.get("extrinsics") or {}
+        if not ext.get("H_image_to_belt"):
+            continue
+        cam = d.get("camera", p.stem)
+        frame = ds / f"{cam}.png"; bags = ds / f"{cam}_bags.png"
+        out.append({"camera": cam, "color": _VAL_COLORS.get(cam, "#ffffff"),
+                    "frame": f"/api/dataset/ams_conveyor/{cam}.png" if frame.exists() else None,
+                    "frame_bags": f"/api/dataset/ams_conveyor/{cam}_bags.png" if bags.exists() else None,
+                    "rms_mm": ext.get("rms_mm"),
+                    "used_intrinsics": ext.get("used_intrinsics")})
+    return jsonify({"cameras": out})
+
+
+@app.route("/api/validate/project", methods=["POST"])
+def api_validate_project():
+    """Map an image pixel to belt mm through this camera's saved extrinsics.
+
+    The displayed frame is the one the extrinsics were solved on (rectified for a
+    camera with intrinsics, raw for one without), and H maps those pixels to belt
+    mm — so the pixel is fed straight through H, no extra undistortion.
+    """
+    import json as _json
+    data = request.get_json(force=True) or {}
+    cam = data.get("camera", "")
+    p = S.results_dir / f"{cam}.json"
+    if not p.exists():
+        return jsonify({"ok": False, "error": "no saved calibration for this camera"}), 400
+    H = (_json.loads(p.read_text()).get("extrinsics") or {}).get("H_image_to_belt")
+    if not H:
+        return jsonify({"ok": False, "error": "no extrinsics for this camera"}), 400
+    pt = np.array([[[float(data["x"]), float(data["y"])]]], np.float64)
+    w = cv2.perspectiveTransform(pt, np.array(H, float)).reshape(2)
+    return jsonify({"ok": True, "x_mm": float(w[0]), "y_mm": float(w[1])})
+
+
+@app.route("/api/calib3d/frame", methods=["GET", "POST"])
+def api_calib3d_frame():
+    """Persist / load the world frame (origin + conveyor-axis angle) set on a map.
+
+    Stored as a sidecar `<glb-stem>.frame.json` next to the .glb in the dataset,
+    so the map carries its own georeference and reloads ready to use. The frame
+    is in the mesh's own metres (glTF): ox,oz on the ground plane, ang the +Y
+    (along-conveyor) direction.
+    """
+    import json as _json
+    base = HERE / "datasets"
+    if request.method == "POST":
+        d = request.get_json(force=True) or {}
+        ds = d.get("dataset")
+        if not ds:
+            return jsonify({"ok": False, "error": "no dataset given"}), 400
+        stem = Path(d.get("glb", "map.glb")).stem
+        p = base / ds / f"{stem}.frame.json"
+        if not p.parent.is_dir():
+            return jsonify({"ok": False, "error": "dataset not found"}), 400
+        p.write_text(_json.dumps({
+            "ox": float(d.get("ox", 0.0)), "oz": float(d.get("oz", 0.0)),
+            "ang": float(d.get("ang", 0.0)),
+            "note": d.get("note", ""),
+        }, indent=2) + "\n")
+        return jsonify({"ok": True, "path": str(p)})
+    ds = request.args.get("dataset", "")
+    stem = Path(request.args.get("glb", "")).stem
+    p = base / ds / f"{stem}.frame.json"
+    if ds and p.exists():
+        return jsonify({"ok": True, "frame": _json.loads(p.read_text())})
+    return jsonify({"ok": True, "frame": None})
+
+
 @app.route("/api/config")
 def api_config():
     return jsonify({
@@ -401,6 +615,11 @@ def coverage_now(grid: int = 4) -> dict:
 
 @app.route("/api/calibrate", methods=["POST"])
 def api_calibrate():
+    data = request.get_json(silent=True) or {}
+    # Anchor the principal point at the image centre when the board could not be
+    # swept across the whole frame (see intrinsics.calibrate). Off by default —
+    # a full-coverage capture should fit it freely.
+    fix_pp = bool(data.get("fix_principal_point", False))
     with S.lock:
         shots = list(S.shots)
         camera, spec = S.camera, S.spec
@@ -409,7 +628,7 @@ def api_calibrate():
         return jsonify({"ok": False,
                         "error": f"need at least {intr.MIN_VIEWS} shots, have {len(shots)}"}), 400
     try:
-        res = intr.calibrate(shots, camera=camera)
+        res = intr.calibrate(shots, camera=camera, fix_principal_point=fix_pp)
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 400
 

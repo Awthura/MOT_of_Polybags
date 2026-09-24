@@ -5,8 +5,14 @@ YOLO on each frame, projects every polybag's ground-contact point onto the belt
 with the calibration solved in `../calibration/`, and shows the positions live
 on a 2-D map of the conveyor. Transport is **MQTT** (topic `/polybags`).
 
-**No cross-camera fusion yet** — each camera's detections are drawn on the map
-as-is (own colour, own IDs). A bag seen by two cameras appears as two dots.
+**Cross-camera fusion and counting are included.** Alongside the raw per-camera
+points (`/polybags`), the streamer deduplicates detections across cameras into one
+object per bag (`/polybags_fused`) and counts throughput by occupancy flux at fixed
+entry/exit belt lines (`counts`). The dashboard draws the RAW map, the FUSED map,
+and the live counts. Fusion merges only across different cameras, never within one
+(the per-camera tracker already separates those); identity is kept by greedy
+nearest-neighbour association on the belt plane. See `core/fusion.py` and
+`core/counter.py`.
 
 ```
  4 synced .avi ─► streamer (Flask)

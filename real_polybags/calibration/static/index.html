@@ -75,6 +75,11 @@
           <button id="btn-calibrate" disabled>Calibrate intrinsics</button>
           <span id="cap-hint" class="note" style="margin:0"></span>
         </div>
+        <label class="note" style="display:flex;align-items:center;gap:6px;margin-top:6px" for="chk-fix-pp"
+               title="Hold cx,cy at the image centre. Use only when the board could not cover the whole frame (e.g. a corner or edge was never reached) AND the stream is a centred crop/downscale. Salvages a capture whose free fit puts the principal point in a wrong place.">
+          <input type="checkbox" id="chk-fix-pp">
+          Fix principal point at centre (partial-frame salvage)
+        </label>
         <div class="shots" id="shots"></div>
       </div>
 

@@ -201,6 +201,11 @@ def build_record(camera: str, intr_result=None, extr_result=None,
             "per_view_error_px": intr_result.per_view_error,
             "coverage": intr_result.coverage,
             "warnings": intr_result.warnings,
+            # True when cx,cy were anchored at the image centre rather than
+            # fitted — a salvage for partial-frame captures. Kept so a reader
+            # never treats a centre-anchored fit as a fully-measured one.
+            "principal_point_fixed": bool(
+                getattr(intr_result, "principal_point_fixed", False)),
             # "board" (fitted from ChArUco captures here) or "factory" (adopted
             # from the camera's own calibration, e.g. RealSense). Distinguishes
             # a fitted RMS of "not applicable" from one that is genuinely zero.

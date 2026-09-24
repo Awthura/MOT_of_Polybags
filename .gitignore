@@ -42,6 +42,17 @@ real_polybags/calibration/results/_workspace/
 # PDF (generated from .md sources)
 *.pdf
 
+# LaTeX / build artefacts (generated from .tex/.md sources, never source)
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.nav
+*.snm
+
 # Tracking outputs — generated files, not source
 tracking_results/
 
@@ -90,6 +101,10 @@ weights/
 # their timestamp CSVs/metadata belong with them, so keep the whole dir local).
 real_polybags/algorithm/videos/
 
+# Calibration recordings (board + belt videos, ~1.8 GB). A Google Drive asset
+# (see DATA.md); the .avi are already ignored, this keeps the metadata with them.
+real_polybags/calibration/calibration_videos/
+
 # Python
 __pycache__/
 *.pyc
@@ -125,3 +140,7 @@ build/
 
 # Local editor/agent settings backups
 .claude/settings.local.json.bak
+
+# LaTeX report — local working directory, not shared repo content.
+# Keeps the .tex sources, build artefacts (.aux/.log/.pdf/etc.) and figures local.
+report/

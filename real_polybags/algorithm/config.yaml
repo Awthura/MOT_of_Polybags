@@ -26,6 +26,14 @@ scenarios:
     video_dir: "videos/bulk"
     session: "20260528_100631"
     cameras: [basler_1, basler_2, lucid]
+  # VALIDATION — supervisor's hand-annotated single-polybag set (session
+  # 20260602, 5 fps, 4 calibrated cams). Used to benchmark the pipeline against
+  # human ground truth (~50 bags/camera). No timestamps -> normalized sync.
+  validation:
+    label: "Validation (supervisor annotated, single moving)"
+    video_dir: "videos/validation"
+    session: "20260602"
+    cameras: [basler_1, basler_2, lucid, rgbd_1_color]
 
 paths:
   results_dir: "../calibration/results"
@@ -89,27 +97,44 @@ belt_bounds:
   y_mm: [-400, 1600]
 
 # Fusion layer — merge overlapping-camera detections into one global object and
-# re-ID bags across the unseen gap between the upstream (basler) and downstream
-# (lucid) camera sets. The belt is a one-directional FIFO conveyor (bags can't
-# pass each other), so re-ID is by DEPARTURE ORDER, not by lucid's unreliable
-# world-X — a belt-speed transit-time gate guards the queue.
+# track each with a unique local ID. Cross-gap RE-ID IS DEFERRED (reid_enabled:
+# false): carrying an ID across the blind basler->lucid gap needs a real re-ID
+# method and is out of scope for now. The line counter (below) does not need it.
 # Published to mqtt.fused_topic alongside the raw per-camera stream.
 fusion:
   enabled: true
+  reid_enabled: false     # carry IDs across the blind gap (deferred; keeps the code below dormant)
   dedup_gate_mm: 130      # detections within this (across cameras) = same bag
-  assoc_gate_mm: 300      # match a detection to an existing global track (lucid ~6fps, bags
+  assoc_gate_mm: 300      # match a detection to an existing global track (slow cams, bags
                           # jump between frames — a generous gate reduces track splits)
-  set2_entry_y_mm: 900    # y>=this = in lucid; below = upstream. Any confirmed upstream
-                          # track that vanishes is queued as flowed-downstream (re-ID candidate).
-  min_hits: 2             # a track must be seen >= this many times to count (anti false-positive)
-  active_ttl_s: 1.2       # retire (and, if upstream, enqueue as departed) soon after a track
-                          # vanishes — so its re-ID entry is ready before it reaches lucid
+  active_ttl_s: 1.2       # retire a track this long after it was last observed
+  # --- deferred re-ID knobs (only used when reid_enabled: true) ---
+  set2_entry_y_mm: 900    # y>=this = in lucid; below = upstream
+  min_hits: 2             # a track must be seen >= this many times to depart
   departed_ttl_s: 90.0    # keep a departed bag re-ID-able this long (gap transit)
-  # belt-speed transit-time gate for the FIFO queue
   default_belt_speed_mm_s: 0.0   # fallback belt speed until motion is measured live
-                                 # (0 = unknown -> pure FIFO order, no time gate)
   transit_tol: 0.5        # accept an arrival within +-this fraction of the expected transit time
   transit_slack_s: 2.0    # extra late-side slack before the head bag is judged overdue
+
+# Counting lines on the belt (world mm). Two lines (rig geometry, not tuned):
+#   - "exit"  y=1200 in the lucid region, the downstream belt EXIT. Every bag
+#             that leaves crosses it. Single-camera (lucid) there.
+#   - "entry" y=0 upstream, inside the basler_1 x basler_2 overlap ([-196,74]),
+#             so both baslers see it (also the fusion dedup check).
+# The primary reported number is the FLUX estimate at each line (see count_flux).
+count_lines:
+  - {name: exit,  y_mm: 1200, x_mm: [-290, 290]}   # downstream (lucid) belt exit
+  - {name: entry, y_mm: 0,    x_mm: [-290, 290]}   # upstream, in the basler_1 x basler_2 overlap
+
+# Counting method. The scene is DENSE and fast (up to 12 to 21 bags per frame,
+# ~88 mm of travel per 5 Hz tick vs ~105 mm bag spacing), so crossing-per-track
+# counting collapses (it reports ~11 when there are ~46). The primary count is
+# therefore FLUX: integrate detection occupancy in a band around each line and
+# divide by the dwell time (band / belt_speed) - a throughput estimate that needs
+# no per-bag tracking. Belt speed is measured live (belt_speed_mm_s: 0).
+count_flux:
+  band_mm: 200            # band thickness centred on each counting line
+  belt_speed_mm_s: 0      # 0 = estimate live from motion; else a fixed fallback
 
 mqtt:
   host: "127.0.0.1"   # IPv4 loopback (avoids macOS localhost->::1 ambiguity)

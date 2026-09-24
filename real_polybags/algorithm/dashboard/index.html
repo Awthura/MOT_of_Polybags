@@ -14,7 +14,13 @@
     background:var(--panel); border-bottom:1px solid var(--line); }
   header .title { font-weight:600; }
   header .sub { color:var(--sub); font-size:12px; }
-  #status { margin-left:auto; font:600 11px/1 monospace; padding:4px 8px;
+  #controls { margin-left:auto; display:flex; gap:6px; }
+  #controls button { font:600 11px/1 monospace; padding:5px 9px; border-radius:6px;
+    border:1px solid var(--line); background:#20262f; color:var(--ink);
+    cursor:pointer; }
+  #controls button:hover { background:#2a323d; }
+  #controls button.off { color:var(--sub); }
+  #status { font:600 11px/1 monospace; padding:4px 8px;
     border-radius:6px; background:#20262f; color:var(--sub); }
   #status.on { color:#5ee08a; } #status.off { color:#ff6b6b; }
   /* two panels side by side (stack when narrow) */
@@ -30,7 +36,9 @@
     padding:5px 8px; letter-spacing:.5px; }
   .count { position:absolute; right:10px; top:8px; z-index:2; background:rgba(0,0,0,.55);
     border:1px solid var(--line); border-radius:6px; padding:5px 8px;
-    font:600 12px/1.2 monospace; }
+    font:600 12px/1.4 monospace; text-align:right; }
+  .count .passed { margin-top:2px; color:#7be6a6; font-size:13px; }
+  .count .ref { color:var(--sub); font-size:10px; font-weight:400; }
   .legend { position:absolute; left:10px; bottom:10px; z-index:2; background:rgba(0,0,0,.55);
     border:1px solid var(--line); border-radius:8px; padding:7px 9px; font-size:12px; }
   .legend .row { display:flex; align-items:center; gap:7px; margin:3px 0; }
@@ -45,6 +53,10 @@
     <div>
       <div class="title">Camera System Digital Twin</div>
       <div class="sub" id="hdr-sub">conveyor · live polybag positions</div>
+    </div>
+    <div id="controls">
+      <button id="btn-play" title="Play / Pause">⏸ Pause</button>
+      <button id="btn-loop" title="Loop at end">🔁 Loop: on</button>
     </div>
     <div id="status" class="off">MQTT ◦ connecting</div>
   </header>

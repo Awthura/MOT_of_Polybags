@@ -11,10 +11,13 @@ shared **metric belt-plane** coordinate frame.
 | [VALIDATION_PLAN.md](VALIDATION_PLAN.md) | establishing a finished calibration is correct, not merely complete |
 | this file | why it is built this way, and how the method itself is verified |
 
-> **No camera on this rig has been calibrated yet.** The only file in `results/`
-> is a synthetic rehearsal artefact, and two of the three camera SDKs are not
-> installed on this machine — see [PROCEDURE.md §0](PROCEDURE.md) for what that
-> means and [§1](PROCEDURE.md) for the route around it.
+> **Calibration status.** Four cameras are solved and committed in `results/`:
+> `basler_1` (clean, trusted metric reference), `basler_2` (metric, agrees with
+> basler_1 to about 11 mm mean), `lucid` and `rgbd_1_color` (homography-only, so
+> their across-belt position is approximate). `rgbd_2_color` is not calibrated, so
+> the shared frame carries four cameras, not five. The digital twin consumes these
+> files directly. To redo a calibration from recordings, follow
+> [PROCEDURE.md](PROCEDURE.md).
 
 ## Why this exists
 

@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "camera": "lucid",
+  "created_utc": "2026-08-07T08:10:08+00:00",
+  "method": "homography_points",
+  "source": "calib3d (3D map, rectified frame)",
+  "notes": "",
+  "extrinsics": {
+    "H_image_to_belt": [
+      [
+        0.6707496019239136,
+        -0.01638021823062884,
+        -465.14632025562054
+      ],
+      [
+        -0.08106279910484833,
+        -0.590208724217777,
+        1499.0029105275678
+      ],
+      [
+        -4.955186407672132e-05,
+        7.663708847030657e-05,
+        1.0
+      ]
+    ],
+    "H_belt_to_image": [
+      [
+        1.544364947599317,
+        0.04220133482324922,
+        655.0957487793877
+      ],
+      [
+        -0.014859998778171624,
+        -1.418668864320581,
+        2119.6766829407206
+      ],
+      [
+        7.766498900932562e-05,
+        0.00011081380607202357,
+        0.8700153660217803
+      ]
+    ],
+    "image_size": [
+      1280,
+      720
+    ],
+    "rms_mm": 3.551409336337066e-05,
+    "max_error_mm": 5.29396319159802e-05,
+    "n_points": 4,
+    "n_inliers": 4,
+    "used_intrinsics": false,
+    "warnings": [
+      "solved without intrinsics \u2014 lens distortion is not corrected, so accuracy degrades toward the frame edges, and the camera's position cannot be recovered",
+      "exactly 4 point pairs \u2014 the fit passes through all of them exactly, so the residuals below are 0 by construction and prove nothing. Add a 5th point to get a real error estimate"
+    ]
+  },
+  "correspondences": {
+    "image_points_px": [
+      [
+        486.4429530201342,
+        356.2595034605705
+      ],
+      [
+        894.496644295302,
+        341.2259464135906
+      ],
+      [
+        913.8255033557047,
+        633.3064833263422
+      ],
+      [
+        486.4429530201342,
+        659.0782954068792
+      ]
+    ],
+    "world_points_mm": [
+      [
+        -144.23914351878935,
+        1245.3198030137348
+      ],
+      [
+        131.63994322797708,
+        1247.774348771976
+      ],
+      [
+        136.98246450655157,
+        1047.734321421546
+      ],
+      [
+        -145.8105189141836,
+        1043.0346533526786
+      ]
+    ],
+    "residuals_mm": [
+      1.8942765624467263e-05,
+      5.29396319159802e-05,
+      3.651254833480028e-05,
+      2.3460693231120395e-05
+    ],
+    "inliers": [
+      1,
+      1,
+      1,
+      1
+    ]
+  },
+  "limitations": [
+    "no intrinsics: lens distortion is not corrected, so error grows toward the frame edges",
+    "no camera pose: a homography fixes the plane mapping, not where the camera is"
+  ],
+  "intrinsics": {
+    "image_size": [
+      1280,
+      720
+    ],
+    "K": [
+      [
+        2903.674834933022,
+        0.0,
+        640.0
+      ],
+      [
+        0.0,
+        2887.583150441918,
+        360.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "D": [
+      -0.9918221007384685,
+      3.543190539463704,
+      0.10086799867939256,
+      -0.011637667692659073,
+      -39.24373701257088
+    ],
+    "fx": 2903.674834933022,
+    "fy": 2887.583150441918,
+    "cx": 640.0,
+    "cy": 360.0,
+    "rms_px": 0.9762776235369627,
+    "n_views": 25,
+    "per_view_error_px": [
+      0.4070210583574282,
+      0.7819296883427672,
+      0.8632320735344677,
+      0.6400378740531733,
+      0.5544282171502929,
+      0.5681491675649063,
+      0.45439211899146315,
+      0.4609098782789692,
+      0.4169763858371127,
+      0.4077880323374126,
+      0.44066686082551987,
+      0.5301095251186405,
+      0.37645950246998194,
+      0.5413697312498287,
+      1.2459794562256885,
+      0.6203038561110127,
+      0.48218007609676533,
+      0.71504483114733,
+      0.8579355191455572,
+      1.2835387438007098,
+      1.4897645416096361,
+      1.0730304340938932,
+      0.9844548679497441,
+      1.2041349265232208,
+      2.1520160963540884
+    ],
+    "coverage": {
+      "frame_cells_seen": 12,
+      "frame_cells_total": 16,
+      "frame_fraction": 0.75,
+      "grid": [
+        [
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "tilt_deg_min": 10.602930258382795,
+      "tilt_deg_max": 49.92503438948043,
+      "tilt_deg_mean": 22.363399787219546,
+      "n_views_tilted_over_15deg": 23
+    },
+    "warnings": [
+      "SALVAGE: principal point held at the image centre, not measured \u2014 done because the board did not cover the whole frame, so a free fit could not be trusted to place it. fx and the distortion terms are therefore only partially constrained; good for coarse undistortion and rough geometry, not precision metric work. A re-record with full-frame coverage is the real fix."
+    ],
+    "principal_point_fixed": true,
+    "method": "board"
+  }
+}
