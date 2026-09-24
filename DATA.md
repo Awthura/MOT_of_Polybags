@@ -5,10 +5,14 @@ carries all code, configs, the committed calibration results, and the printed
 calibration boards. Everything large (rendered datasets, video recordings, Blender
 and mesh assets) lives on Google Drive.
 
-> **Drive link:** _paste the shared Google Drive folder link here._
+> **Google Drive links** (each shared as "anyone with the link — Viewer"):
 >
-> Share it as **"anyone with the link — Viewer"** so graders can download without
-> requesting access.
+> - **Tier 1 — demo videos** → `real_polybags/algorithm/videos/`:
+>   https://drive.google.com/drive/folders/14RQh4hhNrukqPCSlQvUqwzPbnDX8AUqD
+> - **Tier 1 — weights + dashboard map** (the six files in §2):
+>   https://drive.google.com/drive/folders/1V4Be_Td6aJQI9diglv0_WuFRE8KSM9kv
+> - **Tier 2** (synthetic datasets) and **Tier 3** (calibration/experiment
+>   recordings): _add links here once uploaded._
 
 Download only what the task you care about needs (see [§4](#4-minimum-set-per-task)).
 You do **not** need the ~13 GB of synthetic data just to run the digital twin.
@@ -30,9 +34,8 @@ You do **not** need the ~13 GB of synthetic data just to run the digital twin.
 
 ## 2. Small essentials (weights + display map)
 
-These are small (each < 20 MB) but are gitignored, and inference needs them. The
-cleanest option is to **commit them** so the repo runs out of the box; otherwise
-put them in a `weights/` folder on Drive. Ask the maintainer if unsure.
+These are small (each < 20 MB) but are gitignored, and inference needs them.
+**Download:** https://drive.google.com/drive/folders/1V4Be_Td6aJQI9diglv0_WuFRE8KSM9kv
 
 | Repo path | Size | Purpose |
 |---|---|---|
