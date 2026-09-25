@@ -73,19 +73,83 @@ Sanity-check the bus without a browser: `mosquitto_sub -t /polybags -v`.
 - `playback.fps`, `detector.imgsz` — throughput knobs (see Notes).
 - `mqtt` — broker host/ports and the `/polybags` topic.
 
-## MQTT message (`/polybags`)
+## MQTT topics and payloads
+
+The streamer publishes over TCP (`1883`); the browser dashboard subscribes over
+websockets (`9001`). Both are on the same broker (`config.yaml` → `mqtt`). Messages
+are JSON, QoS 0, at a steady `publish_hz` (default 6 Hz), decoupled from inference.
+
+| Topic | Set by | Payload | Contents |
+|---|---|---|---|
+| `/polybags` | `mqtt.topic` | raw (multi-camera) | one entry **per camera per detection** — a bag seen by two cameras appears twice |
+| `/polybags_fused` | `mqtt.fused_topic` | fused (digital twin) | one entry **per physical bag** after cross-camera dedup + tracking |
+
+Both messages carry the same envelope (`t`, `frame`, `session`) and the same
+`counts` block; they differ in what the `polybags` array holds.
+
+### `/polybags` — raw, per-camera detections
 
 ```json
-{ "t": 1699999999123, "frame": 218, "session": "20260727_140907",
+{
+  "t": 1699999999123,
+  "frame": 218,
+  "session": "20260528_092854",
   "polybags": [
-    {"cam":"basler_1","id":3,"x_mm":-136.5,"y_mm":-97.6,"conf":0.82,"metric":true},
-    {"cam":"lucid","id":1,"x_mm":210.0,"y_mm":40.2,"conf":0.71,"metric":false}
-  ] }
+    {"cam": "basler_1", "id": 3, "x_mm": -136.5, "y_mm": -97.6, "conf": 0.82, "metric": true},
+    {"cam": "lucid",    "id": 1, "x_mm": 210.0,  "y_mm": 40.2,  "conf": 0.71, "metric": false}
+  ],
+  "counts": { "lines": [ ... ] },
+  "playback": {"paused": false, "loop": true, "pos_s": 12.3, "duration_s": 30.5}
+}
 ```
 
-`metric:false` = a homography-only camera (lucid, rgbd_1_color): the plane
-mapping is real but lens distortion is uncorrected, so accuracy falls off toward
-frame edges. The dashboard draws those as dashed rings.
+Per object: `cam` (source camera), `id` (per-camera track id), `x_mm`/`y_mm` (belt
+plane, mm), `conf`, `metric`. `metric:false` = a homography-only camera (lucid,
+rgbd_1_color): the plane mapping is real but lens distortion is uncorrected, so
+accuracy falls off toward frame edges. The dashboard draws those as dashed rings.
+
+### `/polybags_fused` — fused global objects (the digital twin)
+
+```json
+{
+  "t": 1699999999123,
+  "frame": 218,
+  "session": "20260528_092854",
+  "polybags": [
+    {"id": 7, "x_mm": -130.2, "y_mm": -95.0, "conf": 0.82, "metric": true, "n_cams": 2, "reid": false}
+  ],
+  "counts": { "lines": [ ... ] }
+}
+```
+
+Per object: `id` (global object id), `x_mm`/`y_mm`, `conf`, `metric` (true if any
+contributing camera is metric), `n_cams` (how many cameras contributed to this
+fused object), `reid` (true if recovered by cross-gap re-identification). The array
+key is still `polybags`, but here each entry is one fused bag, not a raw detection.
+
+### `counts` block (in both messages)
+
+```json
+"counts": {
+  "lines": [
+    {
+      "name": "exit",
+      "y_mm": 0.0, "x_mm": [-290, 290], "band_mm": 60,
+      "flux":     {"basler_1": 46.0, "basler_2": 44.0, "lucid": 45.0},
+      "flux_max": 46.0,
+      "crossing": {"basler_1": 10, "basler_2": 9, "lucid": 11},
+      "crossing_max": 11,
+      "speed_mm_s": {"basler_1": 440, "basler_2": 438, "lucid": 441}
+    }
+  ]
+}
+```
+
+One entry per counting line. `flux` is the per-camera **occupancy-flux** count (the
+primary, reported throughput; `flux_max` is the max across cameras). `crossing` is
+the per-camera per-track line-crossing count, kept for reference — it collapses on
+this dense, fast belt, which is why the flux estimate is the one used. `speed_mm_s`
+is the online per-camera belt-speed estimate that the flux count divides by.
 
 ## How it maps a detection to the belt
 
